@@ -1,0 +1,17 @@
+# 运行时数据：token 与 SQLite 库都在这里，绝不能提交
+data/
+
+# 探针产生的工作目录与原始样本
+probes/scratch/
+probes/out/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/

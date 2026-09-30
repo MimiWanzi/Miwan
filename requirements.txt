@@ -1,0 +1,7 @@
+# Remote Agent Workspace · Local Agent Gateway
+#
+# 本机已确认可用版本：Python 3.12.7 / aiohttp 3.10.5 / pydantic 2.8.2
+# SQLite 用标准库 sqlite3，不引 ORM。
+
+aiohttp>=3.9          # HTTP + WebSocket 服务（第 4 层开始用）
+pydantic>=2.5         # 模型定义与校验
