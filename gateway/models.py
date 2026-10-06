@@ -80,6 +80,11 @@ class Project(BaseModel):
     last_active_at: float | None = None
     session_count: int = 0
 
+    manual: bool = False
+    """用户手动添加的项目（扫描永远发现不了它——目录还没被 Agent 用过，
+    Agent 存储里就没有它的记录）。区别只有一个实际后果：
+    刷新时的清理不能删它，否则第一次刷新它就消失了。"""
+
 
 class Session(BaseModel):
     """Agent 的一次持续工作上下文。"""

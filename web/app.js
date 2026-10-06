@@ -95,6 +95,16 @@ const STATUS = {
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "disconnected"]);
 
+// Agent 的展示名：权威在 /api/agents 的 name（跟着 adapter 走），这里缓存一份
+// 给项目页/任务页用。内置映射是第一屏的兜底——detect 要起子进程，比首屏慢。
+const agentLabels = { claude_code: "Claude Code", opencode: "OpenCode" };
+function primeAgentLabels(payload) {
+  for (const a of (payload && payload.agents) || []) {
+    if (a.agent_id && a.name) agentLabels[a.agent_id] = a.name;
+  }
+}
+const agentLabel = (id) => agentLabels[id] || id || "";
+
 function statusPill(status) {
   const s = STATUS[status] || { label: status || "?", cls: "" };
   return el("span", { class: `pill ${s.cls}`.trim(), text: s.label });
@@ -231,7 +241,7 @@ function metaLine(tag, detail, extra) {
  *
  * 返回 null 表示"已经处理进别处了"（工具结果会被塞进它那张调用卡片里）。
  */
-function renderEvent(event, toolCards, append) {
+function renderEvent(event, toolCards, append, permCards) {
   const p = event.payload || {};
   switch (event.type) {
     case "task_started":
@@ -267,6 +277,39 @@ function renderEvent(event, toolCards, append) {
     }
 
     case "permission_request": {
+      // 审批通道发来的「等人批准」（runner 的 request_permission）：
+      // 带 permission_id + source=prompt，要渲染成可以点是/否的卡片。
+      if (p.source === "prompt" && p.permission_id) {
+        const card = el(
+          "div", { class: "ev perm ask", "data-perm": String(p.permission_id) },
+          el("div", { text: `⏸ 等你批准：${p.tool_name || "?"}` }),
+          p.tool_input
+            ? el("div", { class: "mono", text: short(JSON.stringify(p.tool_input), 300) })
+            : null,
+        );
+        const disable = () => {
+          for (const b of card.querySelectorAll("button")) b.disabled = true;
+        };
+        const decide = async (decision) => {
+          disable();
+          try {
+            await postJSON(`/api/permissions/${p.permission_id}/decision`, { decision });
+            // 结果会以 permission_decided 事件回来，卡片内容由那里统一换——
+            // 这里不就地改文案，避免补发重放时出现两处真相
+          } catch (err) {
+            failure(err);
+            for (const b of card.querySelectorAll("button")) b.disabled = false;
+          }
+        };
+        card.append(
+          el("div", { class: "actions" },
+            el("button", { class: "primary", text: "允许", onclick: () => decide("allow") }),
+            el("button", { class: "danger", text: "拒绝", onclick: () => decide("deny") }),
+          ),
+        );
+        if (permCards) permCards.set(String(p.permission_id), card);
+        return card;
+      }
       // source 有三种，**历史的也得认**：第 6 层之前落库的是 "no_host"，
       // 之后落 "tripwire" / "not_allowed"。而库是唯一事实来源，
       // 补发会把老事件原样送回来——只认新值的话，翻看旧任务时那行会变成空白，
@@ -284,6 +327,30 @@ function renderEvent(event, toolCards, append) {
         el("div", { text: `⚠ 操作被拒：${p.tool_name || "?"}` }),
         p.tool_input ? el("div", { class: "mono", text: short(JSON.stringify(p.tool_input), 200) }) : null,
         why ? el("div", { text: why }) : null,
+      );
+    }
+
+    case "permission_decided": {
+      // 把对应的「等你批准」卡片换成结果。翻旧任务时（从头补发）卡片区
+      // 先建后换，顺序天然正确；直接落到 decided 事件而没有卡片的极端情况
+      // （比如 decided 比卡片还早到达）退化为一条静态行，信息不丢。
+      const card = permCards && permCards.get(String(p.permission_id));
+      if (card) {
+        card.replaceChildren(
+          el("div", { text: p.decision === "allow"
+            ? "✓ 已允许（手机上批准）"
+            : p.auto
+              ? "✗ 已自动拒绝（长时间无人答复）"
+              : "✗ 已拒绝（手机上否决）" }),
+        );
+        card.classList.toggle("ask-allowed", p.decision === "allow");
+        card.classList.toggle("ask", p.decision !== "allow");
+        return null;
+      }
+      return metaLine(
+        p.decision === "allow" ? "✓" : "✗",
+        p.decision === "allow" ? "权限请求已批准" : "权限请求已拒绝",
+        "",
       );
     }
 
@@ -524,6 +591,10 @@ async function route() {
   try {
     if (parts[0] === "pair") await viewPair();
     else if (parts[0] === "devices") await viewDevices();
+    else if (parts[0] === "settings") await viewSettings();
+    else if (parts[0] === "overview") await viewOverview();
+    else if (parts[0] === "p" && parts[2] === "s" && parts[3])
+      await viewSession(decodeURIComponent(parts[1]), decodeURIComponent(parts[3]));
     else if (parts[0] === "p" && parts[1]) await viewProject(decodeURIComponent(parts[1]));
     else if (parts[0] === "t" && parts[1]) await viewTask(decodeURIComponent(parts[1]));
     else await viewProjects();
@@ -581,6 +652,11 @@ async function viewPair() {
   });
   code.addEventListener("input", () => { code.value = formatCode(code.value); });
 
+  // 扫码配对：电脑端出的二维码里就带着配对码（/?pair=123456），扫进来直接填好。
+  const prefill = (new URLSearchParams(location.search).get("pair") || "").replace(/\D/g, "");
+  const autoFilled = prefill.length === 6;
+  if (autoFilled) code.value = formatCode(prefill);
+
   const name = el("input", {
     type: "text", placeholder: "设备名，比如「我的手机」", maxlength: 40,
   });
@@ -595,6 +671,29 @@ async function viewPair() {
     name,
     submit,
   );
+
+  // 主机登录：浏览器的"主机"身份只认主机 token，配对码换不来它。
+  // 没有这个入口的话，凭证一丢（换浏览器、清缓存、30 天过期）就没有回头路了。
+  const tokenInput = el("input", {
+    type: "password", placeholder: "主机凭证（token）", autocomplete: "off",
+  });
+  const hostBtn = el("button", { class: "ghost", text: "主机登录" });
+  const hostMsg = el("div", { class: "pair-msg", hidden: true });
+  hostBtn.onclick = async () => {
+    const token = tokenInput.value.trim();
+    if (!token) return;
+    hostBtn.disabled = true;
+    try {
+      await api(`/api/whoami?token=${encodeURIComponent(token)}`);
+      go("#/");
+    } catch {
+      hostMsg.textContent =
+        "这份主机凭证不对。它放在网关那台电脑的 data\\token.txt 里，" +
+        "或者在那台机器上跑 `python -m gateway url --open` 拿一条免输入的登录链接。";
+      hostMsg.hidden = false;
+      hostBtn.disabled = false;
+    }
+  };
 
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -627,22 +726,33 @@ async function viewPair() {
 
   view.replaceChildren(
     ...(notice ? [el("div", { class: "banner", text: notice })] : []),
+    ...(autoFilled
+      ? [el("div", { class: "banner", text: "配对码已从二维码自动填好——起个设备名，点「配对」就行。" })]
+      : []),
     el("div", { class: "pair-intro" , text:
       "网关那台电脑的启动横幅上有一个 6 位配对码。把它输进来，这台设备就拿到了自己的凭证——" +
       "以后不用再输，也不会在网址里带着长期凭证。" }),
     form,
     message,
     el("p", { class: "hint", text: "配对码 15 分钟内有效，而且只能配一台设备。" }),
+    el("div", { class: "section-title", text: "这台电脑的主人？" }),
+    el("p", { class: "hint", text:
+      "用主机凭证登录，才能用设备管理和监控台的二维码。" +
+      "凭证在网关那台电脑的 data\\token.txt，或在那台机器上跑 `python -m gateway url --open`。" }),
+    tokenInput,
+    hostBtn,
+    hostMsg,
   );
 
-  code.focus();
+  (autoFilled ? name : code).focus();
 }
 
 // ----------------------------------------------------------------------
 // 视图：设备管理
 // ----------------------------------------------------------------------
 
-function fmtDevice(d) {
+/** `refresh` 在吊销成功后调用，让宿主视图自己决定怎么重画（设备页整页重刷，监控台只刷一遍数据）。 */
+function fmtDevice(d, refresh = viewDevices) {
   const row = el("div", { class: `card flat${d.revoked ? " off" : ""}` },
     el("div", { class: "name", text: d.name }),
     el("div", { class: "path", text: d.id }),
@@ -662,7 +772,7 @@ function fmtDevice(d) {
       try {
         await postJSON(`/api/devices/${encodeURIComponent(d.id)}/revoke`, {});
         toast("已吊销，那台设备需要重新配对");
-        await viewDevices();
+        await refresh();
       } catch (err) {
         failure(err);
         btn.disabled = false;
@@ -674,6 +784,46 @@ function fmtDevice(d) {
   return row;
 }
 
+/** 在 box 里出「含配对码」的配对二维码，btn 是触发的按钮（负责 loading 态）。
+ *
+ * 把配对码直接包进二维码（/?pair=xxxxxx），手机扫完只剩起名+确认。
+ * 安全口径不变：配对码只发给**网关本机**发起的请求（api.py 里那条规矩），
+ * 所以远程打开页面拿不到码，退回"扫网址 + 手输横幅上的码"。
+ * 地址三级兜底：公网地址 → 网关算出的局域网地址 → 当前页面的地址。
+ */
+async function renderPairQr(box, btn) {
+  const idle = () => { btn.disabled = false; btn.textContent = "手机扫码配对"; };
+  btn.disabled = true;
+  btn.textContent = "生成中…";
+  try {
+    const [issued, me] = await Promise.all([
+      postJSON("/api/pairing-code", {}),
+      api("/api/whoami"),
+    ]);
+    const base = me.public_url || me.lan_url || location.origin;
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(base)) {
+      idle();
+      box.replaceChildren(el("p", { class: "hint", text:
+        "现在只有本机回环地址，手机扫这个码打不开。确认手机和电脑连同一个 Wi-Fi 后重试，" +
+        "或去 config.toml 配 [server] public_url。" }));
+      return;
+    }
+    const target = issued.code ? `${base}/?pair=${issued.code}` : base;
+    const img = el("img", { src: `/api/qr.svg?text=${encodeURIComponent(target)}`, alt: "配对二维码" });
+    const qr = el("div", { class: "qr big" }, img);
+    img.addEventListener("error", () => qr.replaceWith(
+      el("p", { class: "hint", text: "二维码生成失败：服务端需要 pip install qrcode。" })));
+    box.replaceChildren(qr);
+    box.append(el("p", { class: "hint", text: issued.code
+      ? `手机相机扫码 → 配对码自动填好 → 起个名字点「配对」。码 ${issued.code.slice(0, 3)} ${issued.code.slice(3)}，${Math.round((issued.seconds_left || 0) / 60)} 分钟内有效。`
+      : "手机扫码打开页面后，手输网关那台电脑横幅上的 6 位配对码。" }));
+    box.append(el("button", { class: "ghost", text: "换一个码", onclick: () => renderPairQr(box, btn) }));
+  } catch (err) {
+    failure(err);
+    idle();
+  }
+}
+
 async function viewDevices() {
   setTitle("设备");
   setBack("#/");
@@ -683,9 +833,19 @@ async function viewDevices() {
 
   const nodes = [];
   const pairing = data.pairing || {};
+
+  const pairBtn = el("button", { class: "primary", text: "手机扫码配对" });
+  const pairBox = el("div");
+  pairBtn.onclick = () => renderPairQr(pairBox, pairBtn);
+
+  nodes.push(el("div", { class: "card flat" },
+    el("div", { class: "name", text: "配一台新手机？" }),
+    pairBtn,
+    pairBox,
+  ));
   nodes.push(el("div", { class: "banner", text: pairing.active
     ? `当前配对码还有 ${Math.round((pairing.seconds_left || 0) / 60)} 分钟有效。看不到它就回网关那台机器上看横幅。`
-    : "当前没有有效的配对码。在网关那台机器上跑 `python -m gateway code` 换一个。" }));
+    : "当前没有有效的配对码。点上面的「手机扫码配对」换一个。" }));
 
   nodes.push(el("div", { class: "section-title", text: `已配对设备（${data.devices.length}）` }));
   if (!data.devices.length) {
@@ -700,8 +860,399 @@ async function viewDevices() {
 }
 
 // ----------------------------------------------------------------------
+// 视图：设置
+// ----------------------------------------------------------------------
+
+const CHANNEL_INFO = {
+  serverchan: { name: "Server酱（微信服务号）", keyHint: "SendKey，在 sct.ftqq.com 微信扫码后复制" },
+  pushplus: { name: "PushPlus（微信公众号）", keyHint: "token，在 pushplus.plus 微信扫码后复制" },
+  wecom_webhook: { name: "企业微信群机器人", keyHint: "" },
+};
+
+async function viewSettings() {
+  setTitle("设置");
+  setBack("#/");
+
+  const view = $("#view");
+  const { settings, channels } = await api("/api/settings/notify");
+
+  const enabled = el("input", { type: "checkbox" });
+  enabled.checked = !!settings.enabled;
+
+  const channel = el("select");
+  for (const c of channels) {
+    const opt = el("option", { value: c, text: (CHANNEL_INFO[c] || { name: c }).name });
+    opt.selected = c === settings.channel;
+    channel.append(opt);
+  }
+
+  const key = el("input", { type: "text", autocomplete: "off" });
+  key.value = settings.key || "";
+  const webhook = el("input", {
+    type: "text", autocomplete: "off",
+    placeholder: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…",
+  });
+  webhook.value = settings.webhook_url || "";
+
+  const keyRow = el("label", {}, "key", key);
+  const webhookRow = el("label", {}, "webhook 地址", webhook);
+  function syncChannel() {
+    key.placeholder = (CHANNEL_INFO[channel.value] || { keyHint: "" }).keyHint;
+    keyRow.hidden = channel.value === "wecom_webhook";
+    webhookRow.hidden = channel.value !== "wecom_webhook";
+  }
+  channel.onchange = syncChannel;
+  syncChannel();
+
+  const payload = () => ({
+    enabled: enabled.checked,
+    channel: channel.value,
+    key: key.value.trim(),
+    webhook_url: webhook.value.trim(),
+  });
+
+  const msg = el("p", { class: "hint" });
+  const save = el("button", { class: "primary", text: "保存" });
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await postJSON("/api/settings/notify", payload());
+      toast("已保存");
+      msg.textContent = "";
+    } catch (err) {
+      failure(err);
+    }
+    save.disabled = false;
+  };
+
+  const test = el("button", { class: "ghost", text: "发一条测试推送" });
+  test.onclick = async () => {
+    test.disabled = true;
+    test.textContent = "发送中…";
+    try {
+      // 先存一版再测：不然"刚填的还没保存，测的还是旧配置"，结果对不上号
+      await postJSON("/api/settings/notify", payload());
+      const r = await postJSON("/api/settings/notify/test", {});
+      msg.textContent = r.ok
+        ? "测试推送已发出，去微信里看看。"
+        : `没发出去：${r.detail}`;
+    } catch (err) {
+      failure(err);
+    }
+    test.disabled = false;
+    test.textContent = "发一条测试推送";
+  };
+
+  view.replaceChildren(
+    el("div", { class: "card flat" },
+      el("div", { class: "name", text: "微信推送" }),
+      el("p", { class: "hint", text:
+        "任务完成、失败、等你批准、撞上绊线时发一条微信。网页里本来就能看到的细节不会推。" }),
+      el("div", { class: "fields" },
+        el("div", { class: "check-row" }, enabled, el("span", { text: "开启推送" })),
+        el("label", {}, "渠道", channel),
+        keyRow,
+        webhookRow,
+      ),
+      el("div", { style: "display:flex; gap:8px; margin-top:12px" }, save, test),
+      msg,
+    ),
+    el("p", { class: "hint", text:
+      "Server酱：sct.ftqq.com 微信扫码 → 复制 SendKey。PushPlus：pushplus.plus 微信扫码 → 复制 token。" +
+      "企业微信：任意群里加「群机器人」→ 复制 webhook 地址。推送发的是事件摘要，点开网页看完整过程。" }),
+  );
+}
+
+// ----------------------------------------------------------------------
+// 视图：监控台
+// ----------------------------------------------------------------------
+
+/** 监控台上的任务卡。活跃任务可中断；终态任务只读。点卡片进任务页看实时事件流。 */
+function monitorCard(task, projectName, { active, onChanged }) {
+  const card = el("div", { class: `card${task.status === "running" ? " running" : ""}` },
+    el("div", { class: "name", text: short(task.prompt.replace(/\s+/g, " "), 70) }),
+    el("div", { class: "path", text: projectName || task.project_id, title: task.project_id }),
+    el("div", { class: "sub" },
+      statusPill(task.status),
+      el("span", { text: active
+        ? (task.started_at
+          ? `已跑 ${fmtDuration((Date.now() / 1000 - task.started_at) * 1000)}`
+          : `提交于 ${relTime(task.created_at)}`)
+        : relTime(task.finished_at || task.created_at) }),
+      task.agent_id ? el("span", { text: agentLabel(task.agent_id) }) : null,
+      task.cost_usd !== null && task.cost_usd !== undefined ? el("span", { text: fmtCost(task.cost_usd) }) : null,
+      !active && task.exit_reason ? el("span", { text: task.exit_reason }) : null,
+    ),
+  );
+  card.onclick = () => go(`#/t/${encodeURIComponent(task.id)}`);
+
+  if (active) {
+    const btn = el("button", { class: "danger", text: "中断", style: "margin-top:8px" });
+    btn.onclick = async (e) => {
+      e.stopPropagation();   // 点的是"中断"，不是"进任务页"
+      btn.disabled = true;
+      btn.textContent = "中断中…";
+      try {
+        await postJSON(`/api/tasks/${encodeURIComponent(task.id)}/cancel`, {});
+        // 不把 200 当"已经停了"：终态会随下一次刷新（或任务页的 task 帧）到达
+        toast("已发出中断请求，等它落地");
+        onChanged && onChanged();
+      } catch (err) {
+        failure(err);
+        btn.disabled = false;
+        btn.textContent = "中断";
+      }
+    };
+    card.append(btn);
+  }
+  return card;
+}
+
+/** 电脑前的主场：所有任务的运行状态一屏看完，顺手把设备管了。
+ *
+ * 数据全部来自现成接口（/api/tasks、/api/projects、/api/devices），靠轮询刷新——
+ * 库是唯一事实来源，聚合视图没有比"定期去问库"更正确的姿势。
+ * 只有"设备"这块是主机专属，判断方法和首页一样：先问 whoami，不拿 403 试探。
+ */
+async function viewOverview() {
+  setTitle("监控台");
+  setBack("#/");
+
+  const view = $("#view");
+  const me = await api("/api/whoami").catch(() => null);
+  const isHost = !!(me && me.host);
+
+  const main = el("div", { class: "col-main" });
+  const board = el("div", { class: `console${isHost ? " host" : ""}` }, main);
+  view.replaceChildren(board);
+
+  // 设备列表很少变，每 5 秒重画一遍只会让人正要点的按钮突然挪位置——
+  // 内容没变就不动它。任务区相反，就是要让它动（耗时在走、状态在变）。
+  let lastDevices = "";
+
+  // 在途竞态：导航走的那一刻 teardown 会点亮 dead，已经在路上的这次 fetch
+  // 返回后必须把结果（连同 setConn）整个丢掉——不然旧视图会把连接指示灯
+  // 和 DOM 一起污染到新视图上。stub 要在第一次 await 之前立好。
+  let dead = false;
+  let timer = null;
+  teardown = () => { dead = true; clearInterval(timer); };
+
+  async function refresh() {
+    const [projectsPayload, tasksPayload, devicesPayload] = await Promise.all([
+      api("/api/projects"),
+      api("/api/tasks?limit=500"),
+      isHost ? api("/api/devices") : Promise.resolve(null),
+    ]);
+    if (dead) return;
+    setConn("on", "5s 自动刷新");
+
+    const names = new Map(projectsPayload.projects.map((p) => [p.id, p.name]));
+    const tasks = tasksPayload.tasks;
+    const active = tasks.filter((t) => !TERMINAL.has(t.status));
+    const recent = tasks.filter((t) => TERMINAL.has(t.status)).slice(0, 8);
+
+    main.replaceChildren(
+      el("div", { class: "section-title" }, `运行中（${active.length}）`),
+      el("p", { class: "hint", text: "每 5 秒自动刷新。点卡片进任务页看实时事件流。" }),
+      // 两个 map 必须展开：replaceChildren 不认数组，会把一排卡片转成
+      // "[object HTMLDivElement],…" 一行字（完成任务够 8 条时必现）。
+      ...(active.length
+        ? active.map((t) => monitorCard(t, names.get(t.project_id),
+            { active: true, onChanged: () => refresh().catch(() => {}) }))
+        : [el("div", { class: "empty", text: "现在没有在跑的任务。去项目页提交一个，这里会自己亮起来。" })]),
+      el("div", { class: "section-title", text: `最近完成（${recent.length}）` }),
+      ...(recent.length
+        ? recent.map((t) => monitorCard(t, names.get(t.project_id), { active: false }))
+        : [el("div", { class: "empty", text: "还没有跑完过任务。" })]),
+    );
+
+    if (isHost && devicesPayload) {
+      const digest = JSON.stringify(devicesPayload);
+      if (digest !== lastDevices) {
+        lastDevices = digest;
+        const side = el("div", { class: "col-side" });
+        if (me.public_url) {
+          const qrImg = el("img", { src: "/api/qr.svg", alt: "手机扫码打开本系统" });
+          const qrBox = el("div", { class: "qr" }, qrImg);
+          qrImg.addEventListener("error", () => qrBox.remove());   // 二维码拿不到就整块撤掉，别留白板
+          side.append(
+            el("div", { class: "section-title", text: "手机连接" }),
+            qrBox,
+            el("p", { class: "hint", text: "手机扫码直接打开，网址不用手输。" }),
+          );
+        }
+        side.append(
+          el("div", { class: "section-title" },
+            `设备（${devicesPayload.devices.length}）`,
+            el("span", { style: "float:right" },
+              el("button", { class: "ghost", text: "配对码", onclick: () => go("#/devices") }))),
+        );
+        if (devicesPayload.devices.length) {
+          for (const d of devicesPayload.devices) {
+            side.append(fmtDevice(d, () => refresh().catch(() => {})));
+          }
+        } else {
+          side.append(el("div", { class: "empty", text: "还没有配对过任何设备。" }));
+        }
+        side.append(el("p", { class: "hint", text: "吊销立刻生效，那台设备要重新配对。" }));
+        const existing = board.querySelector(".col-side");
+        if (existing) existing.replaceWith(side);
+        else board.append(side);
+      }
+    }
+  }
+
+  await refresh();
+  if (dead) return;   // 用户在首次加载期间就走了：别装定时器，也别覆盖 teardown
+  timer = setInterval(() => {
+    if (document.hidden) return;   // 后台标签页别空转，回来那轮自然会刷新
+    refresh().catch((err) => {
+      // 吊销可能发生在页面开着的时候：下一次轮询就该把人送回配对页
+      // （横幅会写明原因），而不是永远停在旧画面上闪"刷新失败"。
+      if (err && err.reauth) { teardown(); go("#/pair"); return; }
+      setConn("off", "刷新失败，重试中");
+    });
+  }, 5000);
+}
+
+// ----------------------------------------------------------------------
 // 视图：项目列表
 // ----------------------------------------------------------------------
+
+/** 首页的「新建项目」入口：平时是一条虚线的「＋ 新建项目」，点了展开表单。
+ *
+ * 扫描只能发现"被 Agent 用过"的目录，全新目录必须手动登记——这是
+ * 手机上新开项目的唯一入口，所以要做成列表里第一眼就能看到的卡片，
+ * 而不是顶栏里一个不起眼的小按钮（第一版那样，用户根本没看见）。
+ *
+ * 手机上敲绝对路径太折磨：位置用目录浏览器一路点下去（/api/fs/directories，
+ * 从盘符开始，也可以直接改输入框），名称留空 = 就登记这个目录本身。
+ */
+function buildAddProjectCard() {
+  const locationInput = el("input", {
+    type: "text",
+    placeholder: "项目建在哪？比如 D:\\PythonProjects",
+  });
+  const nameInput = el("input", {
+    type: "text",
+    placeholder: "项目目录名，可留空（留空 = 就用上面的目录）",
+  });
+  const dirBox = el("div", { class: "dir-picker", hidden: true });
+  const browseBtn = el("button", { class: "ghost", type: "button", text: "浏览" });
+  const addSubmit = el("button", { class: "primary", text: "创建" });
+
+  async function loadDirs(path) {
+    dirBox.hidden = false;
+    dirBox.replaceChildren(el("div", { class: "empty", text: "读取中…" }));
+    try {
+      const data = await api(
+        `/api/fs/directories?path=${encodeURIComponent(path || "")}`,
+      );
+      const rows = [
+        el("div", { class: "dir-current", text: data.path || "（选一个盘）" }),
+      ];
+      if (data.parent) {
+        const up = el("button", { class: "ghost", type: "button", text: "← 上一级" });
+        up.onclick = () => {
+          locationInput.value = data.parent;
+          loadDirs(data.parent);
+        };
+        rows.push(up);
+      }
+      if (!data.directories.length) {
+        rows.push(el("div", { class: "hint", text: "下面没有子目录了。" }));
+      }
+      for (const d of data.directories) {
+        const btn = el("button", { class: "ghost dir-row", type: "button", text: d.name });
+        btn.onclick = () => {
+          locationInput.value = d.path;
+          loadDirs(d.path);
+        };
+        rows.push(btn);
+      }
+      dirBox.replaceChildren(...rows);
+    } catch (err) {
+      dirBox.replaceChildren(el("div", { class: "hint", text: failureText(err) }));
+    }
+  }
+  browseBtn.onclick = () => loadDirs(locationInput.value.trim());
+
+  const form = el("form", { class: "new-task", hidden: true },
+    el("div", { class: "row" }, locationInput, browseBtn),
+    dirBox,
+    nameInput,
+    el("div", { class: "row" }, addSubmit),
+    el("p", { class: "hint", text:
+      "名称不存在会自动创建；名称留空就把上面这个目录直接登记成项目。创建后第一个任务会以它为工作目录跑起来。" }),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const loc = locationInput.value.trim();
+    if (!loc) {
+      toast("先选一个位置：点「浏览」一路点下去，或直接填路径");
+      return;
+    }
+    const name = nameInput.value.trim();
+    // 拼接跟随已有的分隔符风格：Windows 路径用 \，POSIX 用 /
+    const sep = loc.includes("\\") ? "\\" : "/";
+    const path = name
+      ? (loc.endsWith(sep) || loc.endsWith("/") ? loc : loc + sep) + name
+      : loc;
+    addSubmit.disabled = true;
+    addSubmit.textContent = "创建中…";
+    try {
+      const { project } = await postJSON("/api/projects", {
+        path, create: !!name,
+      });
+      go(`#/p/${encodeURIComponent(project.id)}`);
+    } catch (err) {
+      failure(err);
+      addSubmit.disabled = false;
+      addSubmit.textContent = "创建";
+    }
+  };
+
+  const toggle = el("div", { class: "card add-project" }, "＋ 新建项目");
+  toggle.onclick = () => {
+    form.hidden = !form.hidden;
+    if (!form.hidden) loadDirs(locationInput.value.trim());
+  };
+  return el("div", {}, toggle, form);
+}
+
+/** 首启引导卡：只在"主机身份 + 一台活跃设备都没有"时出现，配上第一台手机就消失。
+ *
+ * 三步各对应一个已有能力（Agent 检测 / 扫码配对 / 微信推送），
+ * 这里只负责把顺序讲给人听——不做任何新流程，避免引导和真实入口长成两套。
+ * 没就绪的 Agent 也要点名带上原因：否则"为什么只有 Claude Code"这种问题
+ * 只能靠猜（多半是 exe 旁边没有 config.toml，OpenCode 的启动命令没配上）。
+ */
+function buildOnboardingCard(agentsPayload, me) {
+  const agents = agentsPayload.agents || [];
+  const ready = agents.filter((a) => a.status === "ready");
+  const missing = agents.filter((a) => a.status !== "ready");
+  const names = ready.map((a) => a.name).join("、") || "还没检测到可用的 Agent——先确认 claude / opencode 能在电脑上跑";
+
+  const pairBtn = el("button", { class: "primary", text: "手机扫码配对" });
+  const pairBox = el("div");
+  pairBtn.onclick = () => renderPairQr(pairBox, pairBtn);
+
+  // 扫码地址跟着配置走：配了公网隧道就随处可扫；没配才退回局域网地址（要同一 Wi-Fi）。
+  const anywhere = !!(me && me.public_url);
+  return el("div", { class: "card" },
+    el("div", { class: "name", text: "第一次用？三步上手" }),
+    el("div", { class: "path", text: `① 电脑上就绪的 Agent：${names}` }),
+    ...missing.map((a) => el("div", { class: "path hint",
+      text: `　${a.name} 没就绪：${a.detail || "未检测到"}` })),
+    el("div", { class: "path", text: anywhere
+      ? "② 手机扫码配对（走公网隧道地址，人在哪都能扫）"
+      : "② 手机扫码配对（和电脑连同一个 Wi-Fi；配好公网隧道后随处可扫）" }),
+    pairBtn,
+    pairBox,
+    el("div", { class: "path", text: "③（可选）任务完成时在微信里收到通知" }),
+    el("button", { class: "ghost", text: "去设置微信推送", onclick: () => go("#/settings") }),
+  );
+}
 
 async function viewProjects() {
   setTitle("Remote Agent Workspace");
@@ -724,10 +1275,18 @@ async function viewProjects() {
 
   const nodes = [];
 
+  // 首启引导：主机身份 + 没有任何活跃设备 = 第一次用。配上一台设备后这张卡就不再出现。
+  if (me && me.host && devicesPayload
+      && !devicesPayload.devices.some((d) => !d.revoked)) {
+    nodes.push(buildOnboardingCard(agentsPayload, me));
+  }
+
   const ready = agentsPayload.agents.filter((a) => a.status === "ready");
+  const agentDefaults = agentsPayload.defaults || {};
+  primeAgentLabels(agentsPayload);
   if (!ready.length) {
     nodes.push(el("div", { class: "banner", text:
-      "没有检测到可用的 Agent。任务可以提交，但会立刻失败——先确认 claude 命令能用。" }));
+      "没有检测到可用的 Agent。任务可以提交，但会立刻失败——先确认 claude / opencode 命令能用。" }));
   }
 
   const refreshBtn = el("button", { class: "ghost", text: "重新扫描" });
@@ -746,15 +1305,25 @@ async function viewProjects() {
   };
 
   const titleRow = el("span", { style: "float:right" });
+  const monitorBtn = el("button", { class: "ghost", text: "监控台" });
+  monitorBtn.onclick = () => go("#/overview");
+  titleRow.append(monitorBtn);
+
+  const settingsBtn = el("button", { class: "ghost", text: "设置" });
+  settingsBtn.onclick = () => go("#/settings");
+  titleRow.append(settingsBtn);
+
   if (devicesPayload) {
     const active = devicesPayload.devices.filter((d) => !d.revoked).length;
-    const devicesBtn = el("button", { class: "ghost", text: `设备（${active}）` });
+    const devicesBtn = el("button", { class: "ghost", text: `设备管理（${active}）` });
     devicesBtn.onclick = () => go("#/devices");
     titleRow.append(devicesBtn);
   }
   titleRow.append(refreshBtn);
   nodes.push(el("div", { class: "section-title" },
     `项目（${projects.length}）`, titleRow));
+
+  nodes.push(buildAddProjectCard());
 
   if (!projects.length) {
     nodes.push(el("div", { class: "empty", text: "还没有项目。\n点上面的「重新扫描」去本机的 Agent 存储里找。" }));
@@ -783,8 +1352,14 @@ async function viewProjects() {
 
 async function viewProject(projectId) {
   const view = $("#view");
-  const data = await api(`/api/projects/${encodeURIComponent(projectId)}`);
+  const [data, agentsPayload] = await Promise.all([
+    api(`/api/projects/${encodeURIComponent(projectId)}`),
+    api("/api/agents").catch(() => ({ agents: [], defaults: {} })),
+  ]);
   const { project, sessions } = data;
+  const ready = agentsPayload.agents.filter((a) => a.status === "ready");
+  const agentDefaults = agentsPayload.defaults || {};
+  primeAgentLabels(agentsPayload);
 
   setTitle(project.name);
   setBack("#/");
@@ -803,6 +1378,15 @@ async function viewProject(projectId) {
     el("option", { value: "read_only", text: "只读" }),
     el("option", { value: "edit", text: "可改文件" }),
   );
+  // 有多个可用 Agent 才显示选择器：只有一个时它是纯噪音。
+  // 默认值来自 /api/agents 的 defaults——在这里写死一份，迟早和网关不一致。
+  let agentSel = null;
+  if (ready.length > 1) {
+    agentSel = el("select", {},
+      ...ready.map((a) => el("option", { value: a.id, text: a.name })),
+    );
+    if (ready.some((a) => a.id === agentDefaults.agent)) agentSel.value = agentDefaults.agent;
+  }
   const submit = el("button", { class: "primary", text: "开始任务" });
 
   let resumeFrom = null;
@@ -810,7 +1394,7 @@ async function viewProject(projectId) {
 
   const form = el("form", { class: "new-task" },
     textarea,
-    el("div", { class: "row" }, autonomy, submit),
+    el("div", { class: "row" }, autonomy, agentSel, submit),
     el("p", { class: "hint", text: "「全部放行」下 Agent 照常工作，只有撞上绊线（递归删除、强推、关机等）才停下来等你。命中会推到这里。" }),
   );
 
@@ -822,6 +1406,7 @@ async function viewProject(projectId) {
     submit.textContent = "提交中…";
     try {
       const body = { project_id: project.id, prompt, autonomy: autonomy.value };
+      if (agentSel) body.agent_id = agentSel.value;
       if (resumeFrom) body.resume_from = resumeFrom;
       const { task } = await postJSON("/api/tasks", body);
       go(`#/t/${encodeURIComponent(task.id)}`);
@@ -842,17 +1427,21 @@ async function viewProject(projectId) {
     nodes.push(el("div", { class: "empty", text: "这个项目还没有历史会话。" }));
   }
   for (const session of sessions) {
-    const card = el("div", { class: "card flat" },
+    const openable = !!session.native_session_id;
+    const card = el("div", { class: `card${openable ? "" : " flat"}` },
       el("div", { class: "name", text: session.title || "（无标题）" }),
       el("div", { class: "sub" },
-        el("span", { text: session.agent_id || "?" }),
+        el("span", { text: agentLabel(session.agent_id) || "?" }),
         session.git_branch ? el("span", { text: `⑂ ${session.git_branch}` }) : null,
         session.last_active_at ? el("span", { text: relTime(session.last_active_at) }) : null,
       ),
     );
-    if (session.native_session_id) {
+    if (openable) {
+      card.onclick = () =>
+        go(`#/p/${encodeURIComponent(project.id)}/s/${encodeURIComponent(session.native_session_id)}`);
       const btn = el("button", { text: "续接", style: "margin-top:8px" });
-      btn.onclick = () => {
+      btn.onclick = (e) => {
+        e.stopPropagation();   // 点的是"续接"，不是"进会话"
         resumeFrom = session.native_session_id;
         resumeChip.hidden = false;
         resumeChip.replaceChildren(
@@ -878,6 +1467,7 @@ async function viewProject(projectId) {
       el("div", { class: "name", text: short(task.prompt.replace(/\s+/g, " "), 70) }),
       el("div", { class: "sub" },
         statusPill(task.status),
+        task.agent_id ? el("span", { text: agentLabel(task.agent_id) }) : null,
         el("span", { text: relTime(task.created_at) }),
         task.cost_usd !== null && task.cost_usd !== undefined ? el("span", { text: fmtCost(task.cost_usd) }) : null,
         task.exit_reason ? el("span", { text: task.exit_reason }) : null,
@@ -888,6 +1478,116 @@ async function viewProject(projectId) {
   }
 
   view.replaceChildren(...nodes);
+}
+
+// ----------------------------------------------------------------------
+// 视图：单个历史会话
+// ----------------------------------------------------------------------
+
+/** 一条历史消息 → DOM。工具调用压成一行；用户消息给气泡；助手文本走事件流的排版。 */
+function renderHistoryMessage(m) {
+  if (m.tool) {
+    return metaLine("▸", `工具 ${m.tool}`, m.detail);
+  }
+  if (m.role === "user") {
+    return el("div", { class: "ev user-msg" },
+      el("div", { class: "who", text: m.ts ? `你 · ${clockTime(m.ts)}` : "你" }),
+      el("div", { class: "body", text: m.text }),
+    );
+  }
+  return textBlock(m.text);
+}
+
+/** 「在这个会话里继续」表单：发出去就是一次带 ``resume_from`` 的普通建任务，
+ *  Agent 带着会话上下文接着干，提交后跳到新任务页看实时事件流。
+ *
+ *  会话页和任务页（终态）共用。不把任务页内嵌成"迷你聊天窗"：
+ *  实时事件流、断线恢复、中断，那些任务页都有且都验过，复制一份只会改漏。
+ */
+function resumeForm(projectId, nativeId) {
+  const textarea = el("textarea", { placeholder: "接着这个会话说点什么 / 派点什么活？", rows: 3 });
+  const autonomy = el("select", {},
+    el("option", { value: "full", text: "全部放行" }),
+    el("option", { value: "read_only", text: "只读" }),
+    el("option", { value: "edit", text: "可改文件" }),
+  );
+  const submit = el("button", { class: "primary", text: "发送" });
+
+  const form = el("form", { class: "new-task" },
+    textarea,
+    el("div", { class: "row" }, autonomy, submit),
+    el("p", { class: "hint", text: "发出的内容会续接这个会话——Agent 带着上面的上下文继续干活，提交后跳到任务页看实时事件流。" }),
+  );
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const prompt = textarea.value.trim();
+    if (!prompt) return;
+    submit.disabled = true;
+    submit.textContent = "发送中…";
+    try {
+      const body = { project_id: projectId, prompt, autonomy: autonomy.value, resume_from: nativeId };
+      const { task } = await postJSON("/api/tasks", body);
+      go(`#/t/${encodeURIComponent(task.id)}`);
+    } catch (err) {
+      failure(err);
+      submit.disabled = false;
+      submit.textContent = "发送";
+    }
+  };
+  return form;
+}
+
+/** 会话详情：最近聊了什么 + 直接在这个会话里续发任务。
+ *
+ * 发送就是一次带 ``resume_from`` 的普通建任务——Agent 会带着整个会话上下文
+ * 继续干活，跳到任务页看实时事件流。不在这里内嵌一个"迷你任务页"：
+ * 实时事件流、断线恢复、中断，那些任务页都有且都验过，复制一份只会改漏。
+ */
+async function viewSession(projectId, nativeId) {
+  const view = $("#view");
+  const [detail, history] = await Promise.all([
+    api(`/api/projects/${encodeURIComponent(projectId)}`),
+    api(
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(nativeId)}/messages?limit=80`,
+    ).catch(() => null),   // 读不出历史不该把整页带走——下面照样能续发任务
+  ]);
+  const { project, sessions } = detail;
+  const session = sessions.find((s) => s.native_session_id === nativeId);
+
+  setTitle(session ? short(session.title, 24) : "会话");
+  setBack(`#/p/${encodeURIComponent(projectId)}`);
+
+  const nodes = [];
+
+  nodes.push(el("div", { class: "task-head" },
+    el("div", { class: "prompt", text: session ? session.title : nativeId }),
+    el("div", { class: "meta" },
+      el("span", { text: project.name }),
+      session && session.git_branch ? el("span", { text: `⑂ ${session.git_branch}` }) : null,
+      session && session.last_active_at ? el("span", { text: relTime(session.last_active_at) }) : null,
+    ),
+  ));
+
+  nodes.push(el("div", { class: "section-title", text: "最近消息" }));
+  if (history && history.messages.length) {
+    const log = el("div", { class: "stream" });
+    for (const m of history.messages) log.append(renderHistoryMessage(m));
+    nodes.push(log);
+    if (history.messages.length >= 80) {
+      nodes.push(el("p", { class: "hint", text: "只显示了最近 80 条，更早的没有拉取。" }));
+    }
+  } else if (history) {
+    nodes.push(el("div", { class: "empty", text: "这个会话没有可显示的消息。" }));
+  } else {
+    nodes.push(el("div", { class: "empty", text: "历史消息读不出来（这个 Agent 还不支持，或会话文件已被清理）。" }));
+  }
+
+  nodes.push(el("div", { class: "section-title", text: "在这个会话里继续" }));
+  nodes.push(resumeForm(projectId, nativeId));
+
+  view.replaceChildren(...nodes);
+  // 聊天记录要看的是最新的一条，直接落到底部
+  view.scrollTop = view.scrollHeight;
 }
 
 // ----------------------------------------------------------------------
@@ -913,11 +1613,14 @@ async function viewTask(taskId) {
   );
 
   const stream = el("div", { class: "stream" });
+  // 终态后在这里亮出"续接"表单——对话就是任务页的接力，不用绕回会话页再进来
+  const followSlot = el("div");
 
   function paintTask(t) {
     task = t;
     pillSlot.replaceChildren(statusPill(t.status));
     metaEl.textContent = [
+      agentLabel(t.agent_id),
       clockTime(t.started_at || t.created_at),
       t.finished_at && t.started_at ? fmtDuration((t.finished_at - t.started_at) * 1000) : "",
       fmtCost(t.cost_usd),
@@ -926,6 +1629,13 @@ async function viewTask(taskId) {
     const done = TERMINAL.has(t.status);
     cancelBtn.disabled = done;
     cancelBtn.textContent = done ? "已结束" : "中断";
+    // 会话 id 是续接的接力棒（断连任务的恢复也走这条路）。终态只进不退，装一次就够
+    if (done && t.native_session_id && !followSlot.childNodes.length) {
+      followSlot.append(
+        el("div", { class: "section-title", text: "在这个会话里继续" }),
+        resumeForm(t.project_id, t.native_session_id),
+      );
+    }
   }
 
   cancelBtn.onclick = async () => {
@@ -943,9 +1653,10 @@ async function viewTask(taskId) {
   };
 
   paintTask(task);
-  view.replaceChildren(head, el("div", { class: "section-title", text: "事件流" }), stream);
+  view.replaceChildren(head, el("div", { class: "section-title", text: "事件流" }), stream, followSlot);
 
   const toolCards = new Map();
+  const permCards = new Map();
 
   function append(node, alreadyInDom = false) {
     if (!alreadyInDom) stream.append(node);
@@ -957,7 +1668,7 @@ async function viewTask(taskId) {
   teardown = openStream(taskId, {
     since: 0,
     onEvent: (event) => {
-      const node = renderEvent(event, toolCards, append);
+      const node = renderEvent(event, toolCards, append, permCards);
       if (node) append(node);
     },
     onTask: paintTask,
@@ -1005,4 +1716,8 @@ async function adoptUrlToken() {
 }
 
 window.addEventListener("hashchange", route);
-adoptUrlToken().then(route);
+adoptUrlToken().then(() => {
+  // 后台预取 Agent 展示名：detect 要起子进程，不能挡首屏，兜底映射顶第一屏
+  api("/api/agents").then(primeAgentLabels).catch(() => {});
+  route();
+});

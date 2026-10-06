@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from ...models import Project, Session
@@ -176,3 +177,112 @@ def scan(
 
     result.projects.sort(key=lambda p: p.last_active_at or 0, reverse=True)
     return result
+
+
+# ----------------------------------------------------------------------
+# 会话历史（只读）
+# ----------------------------------------------------------------------
+
+#: 单条消息文本的截断长度。会话文件里塞得下整个文件的内容（Read/Write 的全文
+#: 都在里面），原样转发会让"看看聊了什么"的请求背上几 MB。
+HISTORY_TEXT_LIMIT = 2000
+
+
+def _history_ts(record: dict) -> float | None:
+    """ISO 时间戳转 epoch 秒。解析不了就放弃——它只影响显示，不值得为它冒进。"""
+    raw = record.get("timestamp")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        return None
+
+
+def _history_tool_detail(input_data: object) -> str | None:
+    """从工具入参里挑一行最有信息量的摘要，规则与前端 ``ARG_FIELD`` 同思路。"""
+    if not isinstance(input_data, dict) or not input_data:
+        return None
+    for key in ("file_path", "notebook_path", "command", "pattern", "path", "url", "query"):
+        value = input_data.get(key)
+        if value:
+            return f"{key}={str(value)[:120]}"
+    first = next(iter(input_data.values()))
+    return str(first)[:120]
+
+
+def read_history(root: Path, native_session_id: str, limit: int = 60) -> list[dict]:
+    """读一个会话的最近聊天记录：用户消息、助手文本、工具调用摘要。
+
+    按**文件名**找会话文件——文件名就是 session uuid，而目录名是转义过的路径、
+    不可反解（理由见模块 docstring）。找不到返回空列表：文件可能已被用户清掉，
+    这不是错误。
+
+    **这里不做归属判断**：调用方（API 层）必须先拿库确认这个会话属于哪个项目，
+    才允许走到文件这一步。
+    """
+    source: Path | None = None
+    try:
+        for project_dir in root.iterdir():
+            candidate = project_dir / f"{native_session_id}.jsonl"
+            if candidate.is_file():
+                source = candidate
+                break
+    except OSError:
+        return []
+    if source is None:
+        return []
+
+    messages: list[dict] = []
+    try:
+        with source.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                # 主链之外的都跳过：isMeta 是命令回显/caveat 之类的元消息，
+                # isSidechain 是子代理（Task 工具）的支线——混进聊天记录里全是噪音
+                if record.get("isMeta") or record.get("isSidechain"):
+                    continue
+                kind = record.get("type")
+                if kind not in ("user", "assistant"):
+                    continue
+                message = record.get("message")
+                if not isinstance(message, dict):
+                    continue
+                ts = _history_ts(record)
+                content = message.get("content")
+                blocks = (
+                    content
+                    if isinstance(content, list)
+                    else [{"type": "text", "text": content}] if isinstance(content, str) else []
+                )
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type")
+                    if block_type == "text":
+                        text = (block.get("text") or "").strip()
+                        if text:
+                            messages.append({
+                                "role": kind,
+                                "text": text[:HISTORY_TEXT_LIMIT],
+                                "ts": ts,
+                            })
+                    elif block_type == "tool_use" and kind == "assistant":
+                        messages.append({
+                            "role": kind,
+                            "tool": block.get("name") or "?",
+                            "detail": _history_tool_detail(block.get("input")),
+                            "ts": ts,
+                        })
+                    # tool_result 不出现：它在 user 记录里，但没有 text block，天然被滤掉
+    except OSError:
+        return messages  # 读了一半坏了：把手头有的交出去，比整个失败有用
+    return messages[-limit:] if limit > 0 else []

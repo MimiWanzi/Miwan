@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 import uuid
 from collections import deque
 from pathlib import Path
@@ -40,13 +42,16 @@ READ_ONLY_TOOLS = ("Read", "Grep", "Glob")
 FULL_TOOLS = (
     "Read", "Write", "Edit", "NotebookEdit",
     "Glob", "Grep",
+    "Bash",
     "PowerShell",
     "WebFetch", "WebSearch",
     "Task", "TodoWrite",
 )
-
-#: 单轮的默认上限。Agent 跑飞了要能收住，否则手机会一直转圈。
-DEFAULT_TURN_TIMEOUT = 900.0
+#: 当前 CLI 里 shell 工具的名字是 ``Bash``（Windows 上也是）。历史上这里
+#: 只写了 ``PowerShell``，shell 就整体静默失效——CLI 改名/加工具不会报错，
+#: 只会走到权限提示然后无人应答。现在有审批通道兜底（EDIT/FULL 档漏掉
+#: 的工具会"问人"而不是"拒绝"），但这份清单仍要定期和 system/init 的
+#: tools 数组对一遍，理由见模块顶部 FULL_TOOLS 的注释。
 
 #: close() 里"关掉 stdin 等它自己退"的宽限期。
 #:
@@ -71,8 +76,8 @@ class ClaudeSession(AgentSession):
         autonomy: AutonomyPolicy = AutonomyPolicy.READ_ONLY,
         resume_from: str | None = None,
         budget_usd: float | None = None,
-        turn_timeout: float = DEFAULT_TURN_TIMEOUT,
         policy: Policy | None = None,
+        prompt_url: str | None = None,
     ) -> None:
         super().__init__(
             cwd=cwd,
@@ -81,6 +86,10 @@ class ClaudeSession(AgentSession):
             autonomy=autonomy,
             resume_from=resume_from,
         )
+        #: 权限审批回调地址（MCP HTTP 服务，见 gateway/mcp.py）。
+        #: None = 没有审批通道，权限点维持原样——静默拒绝。
+        self._prompt_url = prompt_url
+        self._mcp_config_path: Path | None = None
         #: 绊线清单。默认只有内置那 8 条——**不在这里读 data/tripwires.txt**：
         #: 那会让"会话怎么建"和"配置文件在哪"耦合，测试里就没法塞一份临时清单
         #: 进来。谁装配谁负责加载，这里只消费。
@@ -91,7 +100,6 @@ class ClaudeSession(AgentSession):
         self.policy = Policy() if policy is None else policy
         self._exe = exe
         self._budget_usd = budget_usd
-        self.turn_timeout = turn_timeout
         self._proc: asyncio.subprocess.Process | None = None
         self._mapper = Mapper()
         self._stderr_task: asyncio.Task[None] | None = None
@@ -138,10 +146,44 @@ class ClaudeSession(AgentSession):
             if disallowed:
                 args += ["--disallowedTools", *disallowed]
 
+        if self._prompt_url and self.autonomy in (
+            AutonomyPolicy.EDIT,
+            AutonomyPolicy.FULL,
+        ):
+            # 权限点问手机。绊线不受影响：--disallowedTools 是硬拒绝，
+            # 走不到提示这一步——"规则"与"问人"是两层不同的防线。
+            args += [
+                "--mcp-config", self._write_mcp_config(),
+                "--permission-prompt-tool", "mcp__perm__request_permission",
+            ]
+
         if self._budget_usd:
             args += ["--max-budget-usd", str(self._budget_usd)]
 
         return args
+
+    def _write_mcp_config(self) -> str:
+        """把审批通道写成一份临时 MCP 配置，返回文件路径。
+
+        里面只有回调 URL（带 runner 发的一次性密钥），没有别的秘密：
+        这份文件会被 CLI 读到，而 CLI 进程本身是任务可控的——所以真正的
+        防线不在这份文件，而在「批准」这个动作必须持设备凭证（见
+        runner.decide_permission 的调用方）。
+        """
+        if self._mcp_config_path is not None:
+            self._mcp_config_path.unlink(missing_ok=True)
+        fd, raw = tempfile.mkstemp(prefix="remote-agent-mcp-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "mcpServers": {
+                        "perm": {"type": "http", "url": self._prompt_url},
+                    }
+                },
+                handle,
+            )
+        self._mcp_config_path = Path(raw)
+        return raw
 
     async def _ensure_process(self) -> None:
         if self._proc is not None and self._proc.returncode is None:
@@ -209,17 +251,7 @@ class ClaudeSession(AgentSession):
             )
 
         try:
-            result = await self._pump_until_result(self.turn_timeout)
-        except (TimeoutError, asyncio.TimeoutError):
-            await self.interrupt()
-            error = f"本轮超过 {self.turn_timeout:g}s 未结束，已中断"
-            self._emit(EventType.TASK_FAILED, {"reason": "timeout", "error": error})
-            return RunOutcome(
-                ok=False,
-                reason="timeout",
-                error=error,
-                native_session_id=self.native_session_id,
-            )
+            result = await self._pump_until_result()
         finally:
             self._mapper.end_turn()
 
@@ -250,39 +282,43 @@ class ClaudeSession(AgentSession):
 
         return self._finish(result)
 
-    async def _pump_until_result(self, timeout: float) -> dict | None:
+    async def _pump_until_result(self) -> dict | None:
         """读 stdout 直到 result 消息或流结束。
 
         result 是**每轮**的结束标志，一个 result 恰好对应一次 send（探针 P2 实测）。
+
+        这里**刻意没有单轮超时**：复杂任务跑二十分钟是正常的，按墙钟时间
+        强杀只会误杀还在干活的任务。兜底都在别处——上下文耗尽或出错时
+        CLI 自己会收；进程真挂死了，表现是"状态一直是运行中"，由人在
+        手机上手动中断；不想给额度上保险的话还有 --max-budget-usd。
         """
         proc = self._proc
         assert proc is not None and proc.stdout is not None
 
-        async with asyncio.timeout(timeout):
-            while True:
-                raw = await proc.stdout.readline()
-                if not raw:
-                    return None
-                line = raw.decode("utf-8", errors="replace").strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    self._emit(
-                        EventType.RAW,
-                        {"reason": "非 JSON 输出行", "line": line[:2000]},
-                    )
-                    continue
-                if not isinstance(record, dict):
-                    continue
+        while True:
+            raw = await proc.stdout.readline()
+            if not raw:
+                return None
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                self._emit(
+                    EventType.RAW,
+                    {"reason": "非 JSON 输出行", "line": line[:2000]},
+                )
+                continue
+            if not isinstance(record, dict):
+                continue
 
-                for type_, payload in self._mapper.handle(record):
-                    self._emit(type_, payload)
+            for type_, payload in self._mapper.handle(record):
+                self._emit(type_, payload)
 
-                if record.get("type") == "result":
-                    self.native_session_id = self._mapper.native_session_id
-                    return record
+            if record.get("type") == "result":
+                self.native_session_id = self._mapper.native_session_id
+                return record
 
     def _explain_denial(self, payload: dict) -> dict:
         """给"被拒"这个事实补上原因——**是绊线拦的，还是压根没放行**。
@@ -389,6 +425,10 @@ class ClaudeSession(AgentSession):
             self._stderr_task.cancel()
             await asyncio.gather(self._stderr_task, return_exceptions=True)
             self._stderr_task = None
+
+        if self._mcp_config_path is not None:
+            self._mcp_config_path.unlink(missing_ok=True)
+            self._mcp_config_path = None
 
     @staticmethod
     def _kill(proc: asyncio.subprocess.Process) -> None:

@@ -31,6 +31,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import webbrowser
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -160,6 +161,8 @@ def _print_event(event: Event, elapsed_base: float | None, show_seq: bool) -> No
 
 
 def cmd_agents(args: argparse.Namespace) -> int:
+    # 检测要读 config.toml（opencode 的启动命令在那里面），先加载
+    load_config()
     print("已注册的 Agent 接入：")
     print()
     for info in detect_all():
@@ -436,7 +439,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             host=args.host or config.host,
             port=args.port or config.port,
         )
-    return run_server(config)
+    return run_server(config, open_browser=args.open)
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -480,6 +483,31 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def _split_code(code: str) -> str:
     """``123456`` → ``123 456``。念出来、抄下来都不容易错。"""
     return f"{code[:3]} {code[3:]}"
+
+
+def cmd_url(args: argparse.Namespace) -> int:
+    """打出（或顺手打开）本机的主机登录链接。
+
+    浏览器里"主机"身份只认主机 token，而配对码换不来它——没有这条路，
+    凭证一丢（换浏览器、清缓存、30 天过期）主机功能就再也回不来了。
+
+    打印到**网关这台机器自己的屏幕**上，跟配对码是同一条原则：
+    能看到这条命令输出的人已经坐在这台机器前了。
+    """
+    config = load_config()
+    host = args.host or config.host
+    port = args.port or config.port
+    host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    url = f"http://{host}:{port}/?token={config.token}"
+    print("在网关这台电脑的浏览器里打开下面这条链接，浏览器就拿到主机身份：")
+    print()
+    print(f"    {url}")
+    print()
+    print("链接里带着主机凭证：只在这台机器的屏幕上用，别复制给任何人。")
+    if args.open:
+        webbrowser.open(url)
+        print("已尝试用默认浏览器打开。")
+    return 0
 
 
 def cmd_code(args: argparse.Namespace) -> int:
@@ -678,6 +706,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="启动 HTTP / WebSocket 网关")
     p_serve.add_argument("--host", help="监听地址，默认 0.0.0.0（局域网可达）")
     p_serve.add_argument("--port", type=int, help="监听端口，默认 8765（REMOTE_AGENT_PORT 可覆盖）")
+    p_serve.add_argument("--open", action="store_true",
+                         help="启动后用本机浏览器打开控制台（带主机登录链接，exe 双击场景用）")
     p_serve.set_defaults(func=cmd_serve)
 
     p_tasks = sub.add_parser("tasks", help="列出历史任务")
@@ -700,6 +730,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_code.add_argument("--host", help="网关监听地址，默认取配置")
     p_code.add_argument("--port", type=int, help="网关监听端口，默认取配置")
     p_code.set_defaults(func=cmd_code)
+
+    p_url = sub.add_parser("url", help="打出本机的主机登录链接（--open 直接打开浏览器）")
+    p_url.add_argument("--open", action="store_true", help="用默认浏览器打开链接")
+    p_url.add_argument("--host", help="网关监听地址，默认取配置")
+    p_url.add_argument("--port", type=int, help="网关监听端口，默认取配置")
+    p_url.set_defaults(func=cmd_url)
 
     p_devices = sub.add_parser("devices", help="列出配对过的设备")
     p_devices.set_defaults(func=cmd_devices)

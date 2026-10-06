@@ -43,7 +43,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  /* 窄屏取 14px；宽屏上让顶栏内容和下面的内容列（#view 的 max-width）对齐 */
+  padding: 10px max(14px, calc((100% - 1024px) / 2));
   padding-top: max(10px, env(safe-area-inset-top));
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -101,6 +102,10 @@ body {
   padding: 14px;
   padding-bottom: max(14px, env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
+  /* 手机上永远够不到这个上限；桌面端不再是一张拉满全宽的"手机版" */
+  width: 100%;
+  max-width: 1024px;
+  margin-inline: auto;
 }
 
 .section-title {
@@ -219,6 +224,26 @@ select { padding: 8px 10px; }
 
 .new-task { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
 .new-task .row { display: flex; gap: 8px; align-items: center; }
+.new-task input[type="text"] { width: 100%; padding: 10px 12px; }
+
+.check-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+/* 设置页等"卡片里一组纵向字段"的表单 */
+.fields { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.fields input { padding: 10px 12px; width: 100%; }
 
 .hint {
   font-size: 12px;
@@ -467,3 +492,78 @@ details.result > pre {
   vertical-align: -1px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------------- 监控台 ---------------- */
+
+/* 正在跑的任务给一条左侧蓝线，跟事件流里工具卡片是同一个视觉语言 */
+.card.running {
+  border-left: 3px solid #2f5680;
+  padding-left: 11px;
+}
+
+/* 宽屏双栏：左边任务监控，右边设备管理。手机上依旧单列往下排。 */
+@media (min-width: 1000px) {
+  .console.host {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 330px;
+    gap: 28px;
+    align-items: start;
+  }
+  .console.host .col-side {
+    border-left: 1px solid var(--line);
+    padding-left: 28px;
+  }
+}
+
+/* ---------------- 权限审批 ---------------- */
+
+/* 「等你批准」的卡片要能立刻看到、立刻能点：按钮横排铺开，别缩成一行字 */
+.ev.perm .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ev.perm .actions button { flex: 1; }
+
+/* 决策完成后卡片退回"只读"状态：允许是绿的（和 ok 一个视觉语言） */
+.ev.perm.ask-allowed {
+  border-color: #24503a;
+  background: #16241d;
+  color: var(--ok);
+}
+
+/* ---------------- 历史会话 ---------------- */
+
+/* 用户消息给一个右侧蓝边的气泡，跟左侧蓝边的助手工具卡片方向相反——
+   左是"它做的"，右是"你说的"，扫一眼就能分清谁在说话 */
+.ev.user-msg {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-right: 3px solid #2f5680;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.ev.user-msg .who {
+  font-size: 12px;
+  color: var(--dim);
+  margin-bottom: 2px;
+}
+.ev.user-msg .body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------- 手机连接二维码 ---------------- */
+
+/* 二维码必须白底黑码：整个界面是深色主题，透底渲染摄像头扫不出来。
+   白块四周的 padding 就是摄像头的静区，别省。 */
+.qr {
+  background: #fff;
+  padding: 10px;
+  border-radius: 8px;
+  width: 176px;
+}
+.qr img { display: block; width: 100%; height: auto; }
+
+/* 配对码二维码（网址+码比纯网址内容多，码更密，画大一点好扫） */
+.qr.big { width: 240px; }

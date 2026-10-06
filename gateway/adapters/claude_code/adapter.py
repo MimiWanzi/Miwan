@@ -107,6 +107,11 @@ class ClaudeCodeAdapter(AgentAdapter):
         """
         return discovery.scan(projects_dir(), blocked, agent_id=self.agent_id)
 
+    @classmethod
+    def read_history(cls, native_session_id: str, limit: int = 60) -> list[dict] | None:
+        """会话正文在自己的 JSONL 里，解析是 :mod:`discovery` 的事。"""
+        return discovery.read_history(projects_dir(), native_session_id, limit)
+
     def create_session(
         self,
         *,
@@ -116,6 +121,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         autonomy: AutonomyPolicy = AutonomyPolicy.READ_ONLY,
         resume_from: str | None = None,
         policy: Policy | None = None,
+        prompt_url: str | None = None,
     ) -> AgentSession:
         exe = find_exe()
         if exe is None:
@@ -130,4 +136,5 @@ class ClaudeCodeAdapter(AgentAdapter):
             autonomy=autonomy,
             resume_from=resume_from,
             policy=policy,
+            prompt_url=prompt_url,
         )

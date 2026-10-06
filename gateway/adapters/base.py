@@ -312,6 +312,16 @@ class AgentAdapter(ABC):
         ``capabilities.history_discovery`` 相应标 False，不要假装成功。
         """
 
+    @classmethod
+    def read_history(cls, native_session_id: str, limit: int = 60) -> list[dict] | None:
+        """读一个历史会话的最近聊天记录（只读），最旧的在前。
+
+        返回 None 表示这个 Agent 不支持——UI 据此收起入口，而不是展示一个
+        空页面假装没事。会话正文的存放格式是各 Agent 的私货，核心层不猜，
+        所以默认不支持，由具体 Adapter 覆写。
+        """
+        return None
+
     @abstractmethod
     def create_session(
         self,
@@ -322,6 +332,7 @@ class AgentAdapter(ABC):
         autonomy: AutonomyPolicy = AutonomyPolicy.READ_ONLY,
         resume_from: str | None = None,
         policy: Policy | None = None,
+        prompt_url: str | None = None,
     ) -> AgentSession:
         """建一个会话句柄。**不应该在这里启动任何进程**——启动推迟到第一次 send()，
         这样任务在队列里等待时不会占着资源。
@@ -330,4 +341,8 @@ class AgentAdapter(ABC):
         放在这里而不是让 Adapter 自己去读配置文件：**执行机制是 Adapter 的事，
         规则内容是核心层的事**。换成 Codex 时，同一份绊线要翻译成它的 sandbox 配置，
         规则本身不该跟着实现走。传 None 表示"用内置默认清单"。
+
+        ``prompt_url`` 是权限审批通道的回调地址（带一次性密钥），只在会出现
+        权限提示的档位（EDIT / FULL）由 runner 传入。Adapter 把它接到 Agent
+        自己的"问人"机制上；None 表示这个进程没有审批通道，权限点一律自动拒绝。
         """

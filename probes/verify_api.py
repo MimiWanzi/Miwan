@@ -5,7 +5,7 @@
 `verify_adapter.py` 验的是"适配代码有没有把 CLI 用对"；这个脚本验的是
 "**HTTP 这一层的行为对不对**"——也就是手机真正会碰到的东西。
 
-验的七件事，每一件都是一个具体的失败方式：
+验的八件事，每一件都是一个具体的失败方式：
 
   1. 没 token 一律 401；``/api/health`` 除外；带 ``?token=`` 打开会种下 cookie，
      之后不带 token 也进得来（第 5 层前端就靠这个，它自己不用管认证）
@@ -17,6 +17,8 @@
   5. 带 ``since`` 连上，补发的正好是 ``seq > since`` 的那些，一条不多一条不少
   6. 对已经结束的任务点取消返回 409，而不是假装成功
   7. 未知任务 id：REST 404，WebSocket 回一个 error 帧再关
+  8. 会话历史：归属校验（项目 × 会话必须对得上，错配 404），
+     正文真的从 Agent 的会话文件里读得出来
 
 数据库用临时目录，**不污染真库**；但会真实调用一次 Claude（只读任务），消耗额度。
 
@@ -40,7 +42,7 @@ sys.path.insert(0, str(ROOT))
 import aiohttp  # noqa: E402
 from aiohttp import web  # noqa: E402
 
-from gateway.config import load_config  # noqa: E402
+from gateway.config import APP_DIR, load_config  # noqa: E402
 from gateway.models import Task, TaskStatus, normalize_path  # noqa: E402
 from gateway.server import build_app  # noqa: E402
 from gateway.store import Store  # noqa: E402
@@ -163,7 +165,7 @@ async def main() -> int:
             async with aiohttp.ClientSession(
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
             ) as session:
-                await _run_checks(session, base, ws_base, project, checks)
+                await _run_checks(session, base, ws_base, project, checks, tmp)
 
         finally:
             await runner.cleanup()
@@ -188,6 +190,7 @@ async def _run_checks(
     ws_base: str,
     project,
     checks: list[tuple[str, bool, str]],
+    tmp: str,
 ) -> None:
     # ---- 认证 --------------------------------------------------------
     async with session.get(f"{base}/api/projects") as resp:
@@ -222,6 +225,122 @@ async def _run_checks(
         "启动时遗留的 running 任务被收成 disconnected",
         stale.get("status") == TaskStatus.DISCONNECTED.value,
         f"实际 {stale.get('status')}",
+    )
+
+    # ---- 会话历史 ----------------------------------------------------
+    # 正文不在库里：这条链路是 库（归属）→ Agent 的会话文件（内容）。
+    # 用真实扫描出来的会话验一遍，顺带把"错配必须 404"钉死——否则这个接口
+    # 就能拿任意 uuid 去翻别人的会话文件。
+    async with session.get(f"{base}/api/projects/{project.id}") as resp:
+        sessions = (await resp.json()).get("sessions") or []
+    native = next((s for s in sessions if s.get("native_session_id")), None)
+    if native:
+        nid = native["native_session_id"]
+        async with session.get(
+            f"{base}/api/projects/{project.id}/sessions/{nid}/messages"
+        ) as resp:
+            payload = await resp.json()
+        messages = payload.get("messages") or []
+        check(checks, "会话历史端点返回 200", resp.status == 200, f"实际 {resp.status}")
+        check(
+            checks,
+            "历史消息非空且角色合法",
+            bool(messages)
+            and all(m.get("role") in ("user", "assistant") for m in messages),
+            f"{len(messages)} 条",
+        )
+        first_ts = (messages[0].get("ts") or 0) if messages else 0
+        last_ts = (messages[-1].get("ts") or 0) if messages else 0
+        check(checks, "消息按时间正序（旧在前）", first_ts <= last_ts, f"{first_ts} → {last_ts}")
+        async with session.get(
+            f"{base}/api/projects/other-project/sessions/{nid}/messages"
+        ) as resp:
+            check(
+                checks,
+                "拿别的项目 id 配这个会话被拒（404）",
+                resp.status == 404,
+                f"实际 {resp.status}",
+            )
+        async with session.get(
+            f"{base}/api/projects/{project.id}/sessions/no-such-session/messages"
+        ) as resp:
+            check(checks, "未知会话 id 返回 404", resp.status == 404, f"实际 {resp.status}")
+    else:
+        check(checks, "会话历史（跳过：扫描没发现带 native id 的会话）", True)
+
+    # ---- 手动建项目 ----------------------------------------------------
+    # 扫描永远发现不了"还没被 Agent 用过"的目录——这是手机上新开项目的唯一入口。
+    # 顺手把 prune 钉死：手动项目没有任务、扫描也扫不到它，刷新绝不能删它。
+    async with session.post(
+        f"{base}/api/projects", json={"path": str(Path(tmp) / "不存在")},
+    ) as resp:
+        check(checks, "目录不存在且没带 create → 404", resp.status == 404, f"实际 {resp.status}")
+
+    manual_dir = Path(tmp) / "manual-project"
+    manual_dir.mkdir()
+    async with session.post(
+        f"{base}/api/projects", json={"path": str(manual_dir)}
+    ) as resp:
+        payload = await resp.json()
+        created = payload.get("project") or {}
+        check(checks, "登记一个已存在的目录 → 201", resp.status == 201, f"实际 {resp.status}")
+        check(checks, "返回的项目带 manual 标记", created.get("manual") is True, str(created))
+
+    async with session.post(
+        f"{base}/api/projects", json={"path": str(manual_dir) + "\\\\"}
+    ) as resp:
+        payload = await resp.json()
+        same = (payload.get("project") or {}).get("id") == created.get("id")
+        check(
+            checks,
+            "同一目录换个写法 → 200 且是同一个项目（不重复建）",
+            resp.status == 200 and same,
+            f"实际 {resp.status}",
+        )
+
+    async with session.post(
+        f"{base}/api/projects", json={"path": str(Path(tmp) / "created-later"), "create": True}
+    ) as resp:
+        check(checks, "create: true → 登记成功", resp.status == 201, f"实际 {resp.status}")
+        check(checks, "目录真的被建出来了", (Path(tmp) / "created-later").is_dir(), "")
+
+    # 屏蔽是**精确匹配**（主目录的子目录是合法项目，前缀匹配会误杀），所以
+    # 陷阱必须是清单里原样的路径——子路径拦不住，create 会真的把目录建出来
+    trap = APP_DIR / "data"
+    async with session.post(
+        f"{base}/api/projects", json={"path": str(trap), "create": True}
+    ) as resp:
+        check(
+            checks,
+            "屏蔽清单里的路径即使带 create 也被拒 → 403",
+            resp.status == 403,
+            f"实际 {resp.status}",
+        )
+
+    async with session.post(
+        f"{base}/api/projects", json={"path": str(APP_DIR / "data" / "child")}
+    ) as resp:
+        check(
+            checks,
+            "屏蔽路径的子路径不拦（精确匹配）→ 404 而不是 403",
+            resp.status == 404,
+            f"实际 {resp.status}",
+        )
+
+    async with session.post(
+        f"{base}/api/projects", json={"path": "relative/path"}
+    ) as resp:
+        check(checks, "相对路径被拒 → 400", resp.status == 400, f"实际 {resp.status}")
+
+    async with session.post(f"{base}/api/projects/refresh") as resp:
+        await resp.json()
+    async with session.get(f"{base}/api/projects") as resp:
+        ids = {p["id"] for p in (await resp.json()).get("projects") or []}
+    check(
+        checks,
+        "刷新之后手动项目还在（没被 prune 掉）",
+        created.get("id") in ids,
+        f"库里 {len(ids)} 个项目",
     )
 
     # ---- 刷新项目 ----------------------------------------------------

@@ -1,0 +1,55 @@
+# Remote Agent 网关配置。
+#
+# 用法：复制本文件为 config.toml（和它放在一起，仓库根），按需改。
+# 优先级：命令行 --host/--port > 环境变量 REMOTE_AGENT_* > config.toml > 内置默认。
+# 写了不认识的节或键，启动时会点名警告——"配置不生效"先看那里。
+#
+# config.toml 里可能有 token，绝不要提交（.gitignore 已挡）。
+
+[server]
+# 监听地址。手机/其他设备要访问就保持 0.0.0.0；
+# 只在本机用改 127.0.0.1，不暴露到局域网。
+host = "0.0.0.0"
+port = 8765
+# 网关在外网可达的地址（比如 Cloudflare Tunnel 的固定域名），只在局域网用就留空。
+# 配了它，电脑端监控台会显示二维码，手机扫码直接打开，网址不用手输。
+public_url = ""
+
+[storage]
+# 任务、事件、设备的落盘目录。相对路径锚定应用目录（%LOCALAPPDATA%\RemoteAgent）。
+# 通常不用改：配置和数据统一住在应用目录，与从哪里启动、用 python 还是 exe 无关。
+data_dir = "data"
+
+[agents]
+# 默认用哪个 Agent 接入（python -m gateway agents 可看本机有哪些）。
+default = "claude_code"
+
+[autonomy]
+# 不指定档位时的默认档：full / edit / read_only。
+# full = 工具全放行、绊线硬拦、权限点推到手机上问人；前端下拉框的默认值跟它走。
+default = "full"
+
+[auth]
+# 主机 token（根凭证，等价于这台机器的控制权）。
+# 留空 = 首次启动自动生成、存 data/token.txt，重启沿用（配对关系不丢）；
+# 写在这里则固定用它，适合备份迁移或换机部署。
+token = ""
+
+[opencode]
+# OpenCode 的启动命令（argv 前缀）。留空 = 从 PATH 上找 opencode。
+# 从源码仓库跑的（没有可执行文件）要写 bun + 入口脚本，例如：
+# command = ["C:/Users/<你>/.bun/bin/bun.exe", "run", "--cwd", "D:/path/to/opencode/packages/opencode", "src/index.ts"]
+# 也可以只写一个字符串（等价于单元素数组）；.cmd 垫片会自动套 cmd /c。
+command = []
+
+[notify]
+# 微信推送：任务完成 / 失败 / 等审批 / 撞绊线时发一条通知。
+# 这里只是初始值；在网页「设置」页里改的会存到 data/notify.json，优先于本节。
+# enabled = true
+# channel = "serverchan"      # serverchan / pushplus / wecom_webhook
+# key = ""                    # Server酱的 SendKey（sct.ftqq.com 扫码）或 PushPlus 的 token
+# webhook_url = ""            # 企业微信群机器人的完整 webhook 地址
+
+# 屏蔽清单（项目扫描时整个跳过的目录）刻意不在这里：
+# 它是 data/blocked_projects.txt，一行一个路径、# 开头是注释，
+# 改完刷新项目列表就生效，不用重启网关。

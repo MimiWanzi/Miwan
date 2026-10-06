@@ -27,6 +27,9 @@ class EventType(str, Enum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     PERMISSION_REQUEST = "permission_request"
+    PERMISSION_DECIDED = "permission_decided"
+    """一条待批准的权限请求有了结果。payload 带 permission_id，
+    前端据此把对应的「等你批准」卡片换成结果。"""
     TASK_COMPLETED = "task_completed"
     TASK_FAILED = "task_failed"
     RAW = "raw"

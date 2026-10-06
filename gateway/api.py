@@ -16,14 +16,18 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import os
+from pathlib import Path
 
 from aiohttp import web
 
-from .adapters import DEFAULT_AUTONOMY, AutonomyPolicy, detect_all
+from .adapters import AutonomyPolicy, detect_all, get, BlockFilter
 from .auth import PairingRejected, set_token_cookie
 from .context import get_ctx, get_device
 from .models import TERMINAL_STATUSES
+from .notify import CHANNELS, NotifySettings
 from .runner import RunnerError, UnknownProject
 from .sync import refresh
 
@@ -33,6 +37,8 @@ DEFAULT_TASK_LIMIT = 50
 MAX_TASK_LIMIT = 500
 DEFAULT_EVENT_LIMIT = 1000
 MAX_EVENT_LIMIT = 2000
+DEFAULT_HISTORY_LIMIT = 60
+MAX_HISTORY_LIMIT = 200
 
 
 # ----------------------------------------------------------------------
@@ -257,6 +263,24 @@ def _host_only(request: web.Request) -> web.Response | None:
 # ----------------------------------------------------------------------
 
 
+def lan_ip() -> str | None:
+    """猜一个手机能访问到的本机地址。
+
+    用 UDP connect 到公网地址：它**不发包**，只是让内核选出出口网卡，
+    所以断网环境也照样能用。拿不到就返回 None——纯离线也是正常情况。
+    """
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("10.255.255.255", 1))
+        return sock.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        sock.close()
+
+
 @routes.get("/api/whoami")
 async def whoami(request: web.Request) -> web.Response:
     """我是谁——当前这份凭证对应哪台设备、是不是主机。
@@ -275,12 +299,23 @@ async def whoami(request: web.Request) -> web.Response:
     比去试探 ``/api/devices`` 是不是 403 干净得多。
     """
     device = get_device(request)
-    return json_response(
-        {
-            "device": device.as_dict() if device is not None else None,
-            "host": bool(device is not None and device.id == "host"),
-        }
-    )
+    ctx = get_ctx(request)
+    is_host = device is not None and device.id == "host"
+    payload: dict = {
+        "device": device.as_dict() if device is not None else None,
+        "host": is_host,
+    }
+    # 公网地址只发给主机：知道地址等于知道往哪儿试配对码，能少暴露就少暴露。
+    if is_host and ctx.config.public_url:
+        payload["public_url"] = ctx.config.public_url
+    # 局域网地址同理只发给主机。扫码配对和首启引导都用它兜底：
+    # 大多数用户没有公网隧道，只有它能让"扫码"在纯局域网里走得通。
+    # 只在监听所有接口时给——绑了 127.0.0.1 的网关，这个地址是打不通的。
+    if is_host and ctx.config.host in ("0.0.0.0", "::", ""):
+        lan = lan_ip()
+        if lan:
+            payload["lan_url"] = f"http://{lan}:{ctx.config.port}"
+    return json_response(payload)
 
 
 @routes.get("/api/health")
@@ -299,6 +334,42 @@ async def health(request: web.Request) -> web.Response:
     )
 
 
+@routes.get("/api/qr.svg")
+async def qr_svg(request: web.Request) -> web.Response:
+    """公网地址的二维码，给监控台「手机连接」和设备页「扫码配对」用。
+
+    认证走 cookie（``<img>`` 会自动带上），和页面其他请求同一套凭证。
+    ``?text=`` 可以编码别的内容（配对码二维码走这条路）；不给就编公网地址。
+    二维码里只有地址——地址不是凭证，配对码和设备凭证才是门槛。
+    """
+    denied = _host_only(request)
+    if denied is not None:
+        return denied
+    ctx = get_ctx(request)
+    text = (request.query.get("text") or "").strip() or ctx.config.public_url
+    if not text:
+        return json_error(
+            "还没配置公网地址：config.toml 写 [server] public_url，或设环境变量 REMOTE_AGENT_PUBLIC_URL", 404
+        )
+    if len(text) > 512:
+        return json_error("text 太长，上限 512 字符", 400)
+    try:
+        import qrcode
+        from qrcode.image.svg import SvgPathImage
+    except ImportError:
+        return json_error("服务端缺少 qrcode 库：pip install qrcode", 500)
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=2)
+    qr.add_data(text)
+    qr.make(fit=True)
+    buf = io.BytesIO()
+    qr.make_image(image_factory=SvgPathImage).save(buf)
+    return web.Response(
+        text=buf.getvalue().decode(),
+        content_type="image/svg+xml",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @routes.get("/api/agents")
 async def list_agents(request: web.Request) -> web.Response:
     """本机装了哪些 Agent、各自可用不可用、具备什么能力。
@@ -306,8 +377,19 @@ async def list_agents(request: web.Request) -> web.Response:
     ``detect_all()`` 会起子进程（``claude --version``），所以必须下线程池——
     这个接口被手机打开首页时就会调，卡住事件循环的代价是整个网关一起卡。
     """
+    ctx = get_ctx(request)
     infos = await asyncio.to_thread(detect_all)
-    return json_response({"agents": [_dump(info) for info in infos]})
+    return json_response(
+        {
+            "agents": [_dump(info) for info in infos],
+            # 默认值只认 config 一处。前端要是再写死一份，迟早出现
+            # "手机上显示一个档、实际跑的是另一个档"——那种错没有报错可看。
+            "defaults": {
+                "agent": ctx.config.default_agent,
+                "autonomy": ctx.config.default_autonomy.value,
+            },
+        }
+    )
 
 
 # ----------------------------------------------------------------------
@@ -346,6 +428,50 @@ async def refresh_projects(request: web.Request) -> web.Response:
     return json_response(payload)
 
 
+@routes.post("/api/projects")
+async def create_project(request: web.Request) -> web.Response:
+    """手动登记一个项目——手机上"新开一个项目"的唯一入口。
+
+    扫描只能发现"被 Agent 用过"的目录（Agent 存储里有它的记录），
+    全新目录永远不在列表里。这里直接登记一个路径，第一个任务就会
+    以它为 cwd 跑起来；等 Agent 留下会话文件，下次扫描就能自己发现它。
+
+    校验顺序有讲究：先 ``resolve()`` 成规范绝对路径（Windows 大小写与分隔符
+    归一，保证这里的 stable_id 与将来扫描对同一目录算出的一致），再查屏蔽清单，
+    **再**判断存在性——"目录不存在就建一个"必须排在屏蔽检查后面，
+    不然 create 标志会变成"在屏蔽清单里帮我建目录"的旁门。
+    """
+    ctx = get_ctx(request)
+    body = await _body(request) or {}
+    raw = str(body.get("path") or "").strip()
+    if not raw:
+        return json_error("path 不能为空", 400)
+
+    path = Path(raw)
+    if not path.is_absolute():
+        return json_error("必须是绝对路径，比如 D:\\PythonProjects\\new-idea", 400)
+    resolved = path.resolve()
+    target = str(resolved)
+
+    existed = ctx.store.get_project_by_path(target)
+    if not existed:
+        if BlockFilter(ctx.config.blocked_paths)(target):
+            return json_error("这个路径在屏蔽清单里（用户主目录、网关自身等），不能作为项目", 403)
+        if not resolved.exists():
+            if not body.get("create"):
+                return json_error(f"目录不存在：{target}（让网关顺手建一个就带 create: true）", 404)
+            try:
+                resolved.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                return json_error(f"创建目录失败：{exc}", 400)
+        elif not resolved.is_dir():
+            return json_error("这个路径已存在，但不是目录", 400)
+
+    name = str(body.get("name") or "").strip() or None
+    project = ctx.store.ensure_project(target, name=name)
+    return json_response({"project": _dump(project)}, status=200 if existed else 201)
+
+
 @routes.get("/api/projects/{project_id}")
 async def project_detail(request: web.Request) -> web.Response:
     ctx = get_ctx(request)
@@ -361,6 +487,33 @@ async def project_detail(request: web.Request) -> web.Response:
             "sessions": [_dump(s) for s in sessions],
         }
     )
+
+
+@routes.get("/api/projects/{project_id}/sessions/{native_session_id}/messages")
+async def session_messages(request: web.Request) -> web.Response:
+    """一个历史会话的最近聊天记录（只读）。
+
+    会话正文不在库里——库只存元数据，内容在 Agent 自己的会话文件里。
+    但**归属关系用库判断**：先确认这个会话真的属于这个项目，才允许去找文件，
+    否则这个接口就成了按 uuid 遍历会话文件的旁门。
+    """
+    ctx = get_ctx(request)
+    project_id = request.match_info["project_id"]
+    native_id = request.match_info["native_session_id"]
+
+    session = next(
+        (s for s in ctx.store.list_sessions(project_id) if s.native_session_id == native_id),
+        None,
+    )
+    if session is None:
+        return json_error(f"没有这个会话：{native_id}", 404)
+
+    limit = _int_param(request, "limit", DEFAULT_HISTORY_LIMIT, 1, MAX_HISTORY_LIMIT)
+    adapter_cls = get(session.agent_id)
+    messages = adapter_cls.read_history(native_id, limit) if adapter_cls else None
+    if messages is None:
+        return json_error(f"{session.agent_id or '该 Agent'} 还不支持查看会话历史", 400)
+    return json_response({"session": _dump(session), "messages": messages})
 
 
 # ----------------------------------------------------------------------
@@ -405,10 +558,10 @@ async def create_task(request: web.Request) -> web.Response:
         return json_error("prompt 不能为空", 400)
 
     try:
-        # 不传 autonomy 就是"照常工作"（用户定的策略：默认放行 + 手机只收通知）。
-        # 用 DEFAULT_AUTONOMY 而不是写死 FULL —— 默认值在四处出现（这里、runner、
-        # CLI、前端下拉框），散着写迟早有一处忘了改，而那种错没有报错、没有日志。
-        autonomy = AutonomyPolicy(body.get("autonomy") or DEFAULT_AUTONOMY.value)
+        # 不传 autonomy 就用配置里的默认档。默认档只在 config 一处定义——
+        # api / runner / CLI / 前端下拉框都从它来，散着写迟早有一处忘了改，
+        # 而那种错没有报错、没有日志，只有"怎么又写不了文件"这种说不清的抱怨。
+        autonomy = AutonomyPolicy(body.get("autonomy") or ctx.config.default_autonomy.value)
     except ValueError:
         options = "、".join(p.value for p in AutonomyPolicy)
         return json_error(f"autonomy 只能是 {options}", 400)
@@ -498,3 +651,164 @@ async def cancel_task(request: web.Request) -> web.Response:
         return json_error("该任务不在本进程里运行（来自上次启动），无法中断", 409)
 
     return json_response({"cancelled": True, "task_id": task_id})
+
+
+# ----------------------------------------------------------------------
+# 权限审批
+# ----------------------------------------------------------------------
+
+
+@routes.post("/api/permissions/{perm_id}/decision")
+async def decide_permission(request: web.Request) -> web.Response:
+    """答复一个「等你批准」的权限请求。
+
+    任何**配对设备**都可以答——派任务和批操作是同一信任级别：
+    你把手机交给谁，谁就能让它干活，也就应该能拦住它。
+    """
+    ctx = get_ctx(request)
+    raw = request.match_info["perm_id"]
+    if not raw.isdigit():
+        return json_error("权限请求 id 不对", 400)
+    perm_id = int(raw)
+
+    row = ctx.store.get_permission(perm_id)
+    if row is None:
+        return json_error(f"没有这条权限请求：{perm_id}", 404)
+
+    body = await _body(request) or {}
+    decision = str(body.get("decision") or "").strip()
+    if decision not in ("allow", "deny"):
+        return json_error("decision 必须是 allow 或 deny", 400)
+
+    if not ctx.runner.decide_permission(perm_id, decision, "device"):
+        # 库里 decision 已非 NULL：决策只进不出，晚到的答复改不了结果
+        return json_error("这条请求已经处理过了", 409)
+
+    return json_response({"permission_id": perm_id, "decision": decision})
+
+
+# ----------------------------------------------------------------------
+# 设置（推送等运行时可改的配置）
+# ----------------------------------------------------------------------
+
+
+@routes.get("/api/settings/notify")
+async def get_notify_settings(request: web.Request) -> web.Response:
+    """当前推送设置。凭证与设备同级别，直接返回原文（设置页要回显编辑）。"""
+    ctx = get_ctx(request)
+    return json_response(
+        {"settings": ctx.notifier.settings.as_dict(), "channels": list(CHANNELS)}
+    )
+
+
+@routes.post("/api/settings/notify")
+async def set_notify_settings(request: web.Request) -> web.Response:
+    """保存推送设置并立即生效（重启后仍有效，落在 data/notify.json）。
+
+    没填完也允许保存——用户可能想先把渠道记下来；但**开启**状态下
+    配置必须完整，否则开关是开的、推送永远发不出去，这种错最难查。
+    """
+    ctx = get_ctx(request)
+    body = await _body(request)
+    if body is None:
+        return json_error("请求体必须是 JSON 对象", 400)
+
+    current = ctx.notifier.settings
+    channel = str(body.get("channel") or current.channel)
+    if channel not in CHANNELS:
+        return json_error(f"channel 只能是 {'、'.join(CHANNELS)}", 400)
+
+    def field(name: str) -> str:
+        value = body.get(name)
+        return str(value) if value is not None else getattr(current, name)
+
+    settings = NotifySettings(
+        enabled=bool(body.get("enabled", current.enabled)),
+        channel=channel,
+        key=field("key"),
+        webhook_url=field("webhook_url"),
+    )
+    if settings.enabled:
+        problem = settings.problem()
+        if problem is not None:
+            return json_error(problem, 400)
+    ctx.notifier.update_settings(settings)
+    return json_response({"settings": settings.as_dict()})
+
+
+@routes.post("/api/settings/notify/test")
+async def test_notify_settings(request: web.Request) -> web.Response:
+    """按当前设置真发一条测试推送，把渠道的反馈带给用户。"""
+    ctx = get_ctx(request)
+    ok, detail = await ctx.notifier.send_once(
+        "测试推送", "这是一条测试消息。收到它说明渠道配置没问题，任务事件会推到这个会话。"
+    )
+    return json_response({"ok": ok, "detail": detail})
+
+
+# ----------------------------------------------------------------------
+# 目录浏览（新建项目用）
+# ----------------------------------------------------------------------
+
+
+@routes.get("/api/fs/directories")
+async def list_directories(request: web.Request) -> web.Response:
+    """列一个目录下的子目录，给手机上的「新建项目」当目录选择器。
+
+    手机上敲一个绝对路径太折磨人，这个接口让用户一路点下去。
+    只列**目录**不列文件——这里唯一的用途是选项目位置。
+    """
+    ctx = get_ctx(request)
+    raw = (request.query.get("path") or "").strip()
+
+    if not raw:
+        # 没给路径 = 从最顶层开始。Windows 顶层是盘符。
+        if os.name == "nt":
+            try:
+                drives = os.listdrives()
+            except OSError:
+                drives = []
+            return json_response({
+                "path": "",
+                "parent": None,
+                "directories": [{"name": f"{d}\\", "path": f"{d}\\"} for d in drives],
+            })
+        return json_response({
+            "path": "/",
+            "parent": None,
+            "directories": [{"name": "/", "path": "/"}],
+        })
+
+    path = Path(raw)
+    if not path.is_absolute():
+        return json_error("必须是绝对路径", 400)
+    resolved = path.resolve()
+    if BlockFilter(ctx.config.blocked_paths)(str(resolved)):
+        return json_error("这个路径在屏蔽清单里", 403)
+    if not resolved.is_dir():
+        return json_error(f"目录不存在：{resolved}", 404)
+
+    directories: list[dict] = []
+    try:
+        children = sorted(resolved.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        children = []
+    for child in children:
+        if len(directories) >= 200:
+            break
+        name = child.name
+        # 隐藏目录和系统回收站一类，对"选个项目位置"全是噪音
+        if name.startswith(".") or name.startswith("$"):
+            continue
+        try:
+            if child.is_dir():
+                directories.append({"name": name, "path": str(child)})
+        except OSError:
+            continue
+
+    parent = resolved.parent
+    return json_response({
+        "path": str(resolved),
+        "parent": str(parent) if parent != resolved else None,
+        "directories": directories,
+    })

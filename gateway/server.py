@@ -30,16 +30,18 @@ import logging
 import os
 import socket
 import sys
+import webbrowser
 from pathlib import Path
 
 from aiohttp import web
 
-from . import api, ws
-from .api import json_response
+from . import api, mcp, ws
+from .api import json_response, lan_ip
 from .auth import TOKEN_COOKIE, AuthService, set_token_cookie
 from .config import Config
 from .context import CTX, DEVICE_KEY, GatewayContext, get_ctx
 from .events import EventBus
+from .notify import Notifier
 from .permissions import load_policy
 from .runner import TaskRunner
 from .store import Store
@@ -63,18 +65,29 @@ def build_app(config: Config) -> web.Application:
     """建 aiohttp 应用。**不启动它**——测试里要能先接线再 listen。"""
     store = Store(config.db_path)
     bus = EventBus()
-    runner = TaskRunner(store, bus, policy=load_policy(config.data_dir))
+    notifier = Notifier.from_config(config)
+    # CLI 的审批回调永远打回本机：哪怕服务监听在 0.0.0.0，回调地址也只写
+    # 127.0.0.1——这个 URL 会出现在 CLI 的进程参数里，能不暴露公网地址就不暴露。
+    runner = TaskRunner(
+        store,
+        bus,
+        default_agent=config.default_agent,
+        policy=load_policy(config.data_dir),
+        prompt_base_url=f"http://127.0.0.1:{config.port}/mcp",
+        notifier=notifier,
+    )
     auth = AuthService(store, host_token=config.token)
     ctx = GatewayContext(
-        config=config, store=store, bus=bus, runner=runner, auth=auth
+        config=config, store=store, bus=bus, runner=runner, auth=auth, notifier=notifier
     )
 
     # 顺序即嵌套顺序：error 在外层，才能把 auth 里抛出的意外也变成 JSON
-    app = web.Application(middlewares=[_error_middleware, _auth_middleware])
+    app = web.Application(middlewares=[_error_middleware, _auth_middleware, _fresh_assets_middleware])
     app[CTX] = ctx
 
     app.router.add_get("/", _index)
     app.add_routes(api.routes)
+    app.add_routes(mcp.routes)
     app.add_routes(ws.routes)
     _mount_static(app, config.web_dir)
 
@@ -103,6 +116,24 @@ def _mount_static(app: web.Application, web_dir: Path) -> None:
 # ----------------------------------------------------------------------
 
 
+#: 页面三件套永远回源验证。no-cache 不是不缓存：每次问一句"变了没"，
+#: 没变就是一次 304，很便宜。
+_FRESH_ASSETS = frozenset({"/", "/index.html", "/app.js", "/style.css"})
+
+
+@web.middleware
+async def _fresh_assets_middleware(request: web.Request, handler):
+    """静态页面不吃过期缓存。
+
+    前端文件名固定、又常随功能更新，浏览器启发式缓存会让"网关更新了、
+    页面还是旧的"必现——监控台二维码不出现就是这么来的。
+    """
+    response = await handler(request)
+    if request.path in _FRESH_ASSETS and response.status == 200:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @web.middleware
 async def _error_middleware(request: web.Request, handler):
     """把未捕获的异常变成 JSON。
@@ -128,7 +159,14 @@ async def _auth_middleware(request: web.Request, handler):
     # 被吊销的设备拿着真凭证，但**不再被接受**。
     # 这一步必须在 handler 之前，而且要和"凭证不认识"分开报——
     # 用户看到"手机丢了，我已经吊销了"和"这个 token 不对"要做的事完全不同。
-    if device is not None and device.revoked:
+    #
+    # 但只拦**需要凭证的路径**（/api、/ws）。静态外壳要是也拦，被吊销的
+    # 设备连页面都加载不出来，屏幕上是一坨裸 JSON——前端没有任何机会
+    # 告诉它"你被吊销了，请重新配对"。外壳放行，前端才能把话说完。
+    revoked = device is not None and device.revoked
+    authorized = device is not None and not device.revoked
+
+    if revoked and _needs_token(request.path):
         return json_response(
             {
                 "error": "revoked",
@@ -137,7 +175,6 @@ async def _auth_middleware(request: web.Request, handler):
             status=401,
         )
 
-    authorized = device is not None
     if _needs_token(request.path) and not authorized:
         return json_response(
             {"error": "unauthorized", "detail": "缺少或不正确的 token"},
@@ -184,6 +221,21 @@ async def _auth_middleware(request: web.Request, handler):
         # 放在这里而不是 ``_index`` 里：种 cookie 的路径不止一条（任何带
         # ``?token=`` 的请求都会），约束跟着动作走，才不会漏掉新加的那条。
         response.headers["Cache-Control"] = "no-store"
+
+    # 缓存策略按路径走，**对所有响应生效**：
+    #   - API / WS / MCP 的应答永远 no-store——它们是数据，缓存了就是假的
+    #   - 静态资源 no-cache：每次都问一句"改了没"（Last-Modified 命中就 304），
+    #     局域网里这点往返不构成负担；换来的确定性是**网关一重启、手机一刷新
+    #     就在跑最新的前端**。吃过亏的背景：曾经只靠浏览器启发式缓存，
+    #     重启网关后手机还拿着旧 app.js，新功能"明明写了却没有"，查起来像闹鬼。
+    if (
+        request.path.startswith("/api/")
+        or request.path.startswith("/mcp/")
+        or request.path == "/ws"
+    ):
+        response.headers.setdefault("Cache-Control", "no-store")
+    else:
+        response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 
@@ -192,8 +244,10 @@ def _needs_token(path: str) -> bool:
 
     前端外壳（html/js/css）不是秘密，而且它**必须**能在没有 token 时加载——
     否则第一次带 ``?token=`` 打开页面，反而连页面本身都拿不到。
+    ``/mcp/`` 也不要：CLI 手里没有设备凭证，它靠 URL 上的每任务密钥自证
+    （见 :mod:`gateway.mcp`）。
     """
-    if path in PUBLIC_PATHS:
+    if path in PUBLIC_PATHS or path.startswith("/mcp/"):
         return False
     return path == "/ws" or path.startswith("/api/")
 
@@ -296,8 +350,13 @@ async def _on_cleanup(app: web.Application) -> None:
 # ----------------------------------------------------------------------
 
 
-def run_server(config: Config) -> int:
-    """阻塞式启动，Ctrl-C 退出。返回进程退出码。"""
+def run_server(config: Config, open_browser: bool = False) -> int:
+    """阻塞式启动，Ctrl-C 退出。返回进程退出码。
+
+    ``open_browser`` 给 exe 双击场景用：起来就自动进控制台。开的是带主机
+    凭证的**本机**链接（与 ``cmd_url`` 同一条安全口径）——普通人双击 exe 后
+    不该被要求先手抄一遍 token。
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(levelname)-7s %(message)s",
@@ -319,6 +378,9 @@ def run_server(config: Config) -> int:
         return 1
 
     _print_banner(config, app[CTX])
+    if open_browser:
+        host = "127.0.0.1" if config.host in ("0.0.0.0", "::") else config.host
+        webbrowser.open(f"http://{host}:{config.port}/?token={config.token}")
     web.run_app(
         app,
         sock=sock,  # 端口已经绑好了，交给 aiohttp 去 accept
@@ -366,22 +428,6 @@ def _bind(host: str, port: int) -> socket.socket | None:
     return sock
 
 
-def _lan_ip() -> str | None:
-    """猜一个手机能访问到的本机地址。
-
-    用 UDP connect 到公网地址：它**不发包**，只是让内核选出出口网卡，
-    所以断网环境也照样能用。拿不到就返回 None——纯离线也是正常情况。
-    """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.connect(("10.255.255.255", 1))
-        return sock.getsockname()[0]
-    except OSError:
-        return None
-    finally:
-        sock.close()
-
-
 def _print_banner(config: Config, ctx: GatewayContext) -> None:
     """启动横幅。**这里显示的配对码就是这一层存在的理由。**
 
@@ -395,15 +441,19 @@ def _print_banner(config: Config, ctx: GatewayContext) -> None:
     """
     port = config.port
     code = ctx.auth.issue_code()
+    # exe 用户手里没有 python -m gateway，换码命令得说他们能跑的那条
+    code_cmd = "RemoteAgent.exe code" if getattr(sys, "frozen", False) else "python -m gateway code"
     lines = [
         "",
         "Remote Agent Workspace · Gateway",
         "─" * 64,
         f"  本机    http://127.0.0.1:{port}/",
     ]
-    lan = _lan_ip()
+    lan = lan_ip()
     if lan:
         lines.append(f"  局域网  http://{lan}:{port}/")
+    if config.public_url:
+        lines.append(f"  公网    {config.public_url}　（二维码在监控台右侧）")
 
     web_note = "" if (config.web_dir / "index.html").is_file() else "（没找到 web/index.html，退回接口清单）"
     lines += [
@@ -413,10 +463,11 @@ def _print_banner(config: Config, ctx: GatewayContext) -> None:
         f"          {code[:3]} {code[3:]}          ← 15 分钟内有效，只能配一台设备",
         "",
         f"  静态页面  {config.web_dir} {web_note}".rstrip(),
+        f"  配置      {config.source or '内置默认（仓库根没有 config.toml）'}",
         f"  数据库    {config.db_path}",
-        f"  主机凭证  {config.token_file}（换码：python -m gateway code）",
+        f"  主机凭证  {config.token_file}（换码：{code_cmd}）",
         "",
-        "  配对码不见了就打 `python -m gateway code` 重新要一个。",
+        f"  配对码不见了就打 `{code_cmd}` 重新要一个。",
         "  Ctrl-C 停止。",
         "─" * 64,
         "",
