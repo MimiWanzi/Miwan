@@ -16,6 +16,7 @@ from aiohttp import web
 from .auth import AuthService
 from .config import Config
 from .events import EventBus
+from .notify import Notifier
 from .runner import TaskRunner
 from .store import Store
 
@@ -33,6 +34,8 @@ class GatewayContext:
     bus: EventBus
     runner: TaskRunner
     auth: AuthService
+    #: 微信推送。挂在上下文上（而不是 runner 里）是因为设置页要读改它的设置。
+    notifier: Notifier
 
 
 CTX: web.AppKey[GatewayContext] = web.AppKey("gateway_ctx", GatewayContext)

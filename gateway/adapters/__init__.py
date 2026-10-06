@@ -7,9 +7,10 @@
     2. 在这里 import 它的 Adapter 类并调用 register()
     3. 完。runner / api / ws / store 一行都不用改。
 
-Codex 和 OpenCode 尚未实现。它们与 Claude Code 的形态差别（每轮一个进程 /
-HTTP 服务）已经被抽象层容纳，但**没有被实测验证过**——
-真去接的时候要重新走一遍探针，别把这里的接口当成"已经证明可行"。
+Codex 尚未实现。它与 Claude Code 的形态差别（每轮一个进程）已经被抽象层
+容纳，但**没有被实测验证过**——真去接的时候要重新走一遍探针，
+别把这里的接口当成"已经证明可行"。OpenCode 已接入（HTTP serve 形态，
+见 ``adapters/opencode/``）。
 """
 
 from __future__ import annotations
@@ -92,17 +93,36 @@ def _is_ready_safe(cls: type[AgentAdapter]) -> bool:
         return False
 
 
+async def shutdown_adapters() -> None:
+    """网关关停时逐个调用 Adapter 的 ``adapter_shutdown``。
+
+    不是所有 Adapter 都有常驻资源（Claude 的进程跟着会话走，没有），
+    所以这是可选的类方法而不是抽象接口。OpenCode 用它杀共享的 serve
+    进程——Windows 上不显式杀就是孤儿进程。
+    """
+    for cls in _REGISTRY:
+        hook = getattr(cls, "adapter_shutdown", None)
+        if hook is None:
+            continue
+        try:
+            await hook()
+        except Exception as exc:  # noqa: BLE001 —— 关停路径上单个失败不该拦住其余的
+            print(f"[shutdown] {cls.agent_id} 关停失败：{type(exc).__name__}: {exc}", flush=True)
+
+
 # ----------------------------------------------------------------------
 # 注册具体实现
 # ----------------------------------------------------------------------
 
 from .claude_code import ClaudeCodeAdapter  # noqa: E402
+from .opencode import OpenCodeAdapter  # noqa: E402
 
 register(ClaudeCodeAdapter)
+register(OpenCodeAdapter)
 
 #: 尚未实现，列在这里是为了让"扩展路径"可见而不是只存在于文档里。
 #: 接 Codex 时在这里 register(CodexAdapter) 即可。
-PENDING_AGENTS = ("codex", "opencode", "cursor")
+PENDING_AGENTS = ("codex", "cursor")
 
 if sys.version_info < (3, 12):  # pragma: no cover
     # 用到了 asyncio.timeout（3.11+）与 3.12 的若干写法，早点报错比运行到一半崩好
@@ -127,5 +147,6 @@ __all__ = [
     "ready_adapters",
     "register",
     "registered",
+    "shutdown_adapters",
     "stable_id",
 ]

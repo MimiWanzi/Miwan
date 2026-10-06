@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS projects (
     name           TEXT NOT NULL,
     path           TEXT NOT NULL UNIQUE,
     git_branch     TEXT,
-    last_active_at REAL
+    last_active_at REAL,
+    manual         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS devices (
 #: （谁在什么时候让哪个 Agent 干了什么），不像 projects / sessions 那样
 #: 随时能从 Agent 的存储里重扫出来。丢不起。
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "projects": {"manual": "INTEGER NOT NULL DEFAULT 0"},
     "sessions": {"agent_id": "TEXT"},
     "tasks": {"agent_id": "TEXT", "native_session_id": "TEXT"},
 }
@@ -114,6 +116,9 @@ class Store:
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode = WAL")
+        # 数据统一存放后，误开第二个网关（端口不同）会共享同一个库：
+        # 写锁撞上时等一等，而不是立刻报 database is locked
+        self._conn.execute("PRAGMA busy_timeout = 5000")
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
@@ -148,8 +153,8 @@ class Store:
     def upsert_project(self, project: Project) -> None:
         self._conn.execute(
             """
-            INSERT INTO projects (id, name, path, git_branch, last_active_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO projects (id, name, path, git_branch, last_active_at, manual)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name           = excluded.name,
                 path           = excluded.path,
@@ -157,7 +162,9 @@ class Store:
                 last_active_at = MAX(
                     COALESCE(excluded.last_active_at, 0),
                     COALESCE(projects.last_active_at, 0)
-                )
+                ),
+                -- 手动标记只进不出：扫描永远不会产生它，也就永远不该覆盖掉它
+                manual         = projects.manual
             """,
             (
                 project.id,
@@ -165,6 +172,7 @@ class Store:
                 project.path,
                 project.git_branch,
                 project.last_active_at,
+                project.manual,
             ),
         )
         self._conn.commit()
@@ -241,6 +249,7 @@ class Store:
             id=stable_id(path),
             name=name or (Path(path).name or path),
             path=path,
+            manual=True,
         )
         try:
             self.upsert_project(project)
@@ -268,19 +277,21 @@ class Store:
         """删除本次扫描中已不存在的项目（会话随之级联删除）。
 
         项目与会话都是**派生数据**，随时能从 ~/.claude/projects 重新扫出来，
-        所以删除是安全的。但有两点保护：
+        所以删除是安全的。但有三点保护：
 
           - **带任务的项目不删**：任务是我们自己产生的真实数据，
             删掉项目会让它们变成悬空引用（外键已开启，删除本身也会失败）
+          - **手动添加的项目不删**：它还没被 Agent 用过、扫描永远扫不到它，
+            不保护的话第一次刷新它就消失了
           - 不删本次扫描跳过的项目（读不到 cwd、被屏蔽等），它们下次扫描可能又出现
 
         返回删除的项目数。
         """
-        rows = self._conn.execute("SELECT id FROM projects").fetchall()
+        rows = self._conn.execute("SELECT id, manual FROM projects").fetchall()
         removed = 0
         for row in rows:
             project_id = row["id"]
-            if project_id in keep_ids:
+            if project_id in keep_ids or row["manual"]:
                 continue
             has_task = self._conn.execute(
                 "SELECT 1 FROM tasks WHERE project_id = ? LIMIT 1", (project_id,)
@@ -298,6 +309,19 @@ class Store:
             (native_session_id,),
         ).fetchone()
         return self._row_to_session(row) if row else None
+
+    def latest_task_by_native_id(self, native_session_id: str) -> Task | None:
+        """续接链上最近的那个任务。
+
+        会话是任务**跑起来之后**才建出来的，来不及进 sessions 表（那要等
+        下一次同步扫描）。判断"这个会话原本属于哪个 Agent"时，任务记录是
+        唯一现成的出处。
+        """
+        row = self._conn.execute(
+            "SELECT * FROM tasks WHERE native_session_id = ? ORDER BY created_at DESC LIMIT 1",
+            (native_session_id,),
+        ).fetchone()
+        return self._row_to_task(row) if row else None
 
     # ------------------------------------------------------------------
     # Task
@@ -479,6 +503,49 @@ class Store:
         self._conn.commit()
 
     # ------------------------------------------------------------------
+    # 权限审批（第 6 层的「等人批准」）
+    # ------------------------------------------------------------------
+
+    def create_permission(
+        self, task_id: str, tool_name: str, tool_input_json: str, ts: float
+    ) -> int:
+        """登记一条待决策的权限请求，返回它的 id。
+
+        decision / decided_at 留空——"还在等人"就是用 NULL 表达的，
+        查 pending 用的就是这个条件。
+        """
+        cursor = self._conn.execute(
+            "INSERT INTO permissions (task_id, ts, tool_name, tool_input) "
+            "VALUES (?, ?, ?, ?)",
+            (task_id, ts, tool_name, tool_input_json),
+        )
+        self._conn.commit()
+        return int(cursor.lastrowid or 0)
+
+    def get_permission(self, perm_id: int) -> sqlite3.Row | None:
+        return self._conn.execute(
+            "SELECT * FROM permissions WHERE id = ?", (perm_id,)
+        ).fetchone()
+
+    def decide_permission(self, perm_id: int, decision: str, decided_at: float) -> bool:
+        """写入决策。返回 False 表示这条不存在或**已经决策过**——
+        决策只进不出，重复点击/并发决策都要在这里挡住。"""
+        cursor = self._conn.execute(
+            "UPDATE permissions SET decision = ?, decided_at = ? "
+            "WHERE id = ? AND decision IS NULL",
+            (decision, decided_at, perm_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def pending_permission_ids(self, task_id: str) -> list[int]:
+        rows = self._conn.execute(
+            "SELECT id FROM permissions WHERE task_id = ? AND decision IS NULL",
+            (task_id,),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    # ------------------------------------------------------------------
     # 行 → 模型
     # ------------------------------------------------------------------
 
@@ -492,6 +559,7 @@ class Store:
             git_branch=row["git_branch"],
             last_active_at=row["last_active_at"],
             session_count=row["session_count"] if "session_count" in keys else 0,
+            manual=bool(row["manual"]) if "manual" in keys else False,
         )
 
     @staticmethod

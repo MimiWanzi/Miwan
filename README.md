@@ -31,19 +31,27 @@
 | 能力 | 说明 |
 |---|---|
 | 配对 | 输入 6 位配对码换一份**本设备专属**凭证，不用把主机 token 抄到手机上 |
+| 监控台 | `#/overview` 一屏看所有任务的运行状态（活跃任务可一键中断），主机凭证还能顺手管理设备；每 5 秒自动刷新 |
+| 手机扫码连接 | 监控台右侧显示公网地址的二维码，手机扫码即进、网址不用手输；设备页还能出**含配对码**的配对二维码（网关本机发起时），扫完只剩起名+确认（`config.toml` 配 `[server] public_url`，服务端 `pip install qrcode`） |
 | 项目列表 | 列出电脑上被 Agent 用过的项目，含 git 分支与最近活动时间 |
-| 项目页 | 历史会话列表 + 新建任务表单 |
-| 任务页 | **实时事件流**：助手文本、工具调用卡片（含工具名与参数）、工具结果、完成/失败标记 |
+| 新建项目 | 首页手动登记一个绝对路径当项目（目录不存在可顺手创建）——扫描只找得到被 Agent 用过的目录，新开项目全靠它 |
+| 项目页 | 历史会话列表 + 新建任务表单（接了多个 Agent 时可挑选由谁执行） |
+| 任务页 | **实时事件流**：助手文本、工具调用卡片（含工具名与参数）、工具结果、完成/失败标记；任务结束后可直接在页面底部续接这个会话继续对话（中断/断连的任务也从这里恢复） |
+| 会话历史 | 点进历史会话看最近的聊天记录（用户 / 助手 / 工具调用），并直接在会话里续发任务（读正文仅支持 Claude Code 的会话） |
 | 中断 | 一键中断正在跑的任务，状态转为 `cancelled` |
 | 断线恢复 | 连接断了自动重连，按 `seq` 补齐，**不重不漏** |
 | 探活 | 连接被静默黑洞掉（进隧道、Wi-Fi 转蜂窝）时，约 30 秒内自己发现并重连 |
 | 权限通知 | 撞上绊线的操作以**只读卡片**显示在事件流里，写明是哪条绊线、为什么 |
+| 微信推送 | 任务完成 / 失败 / 等你批准 / 撞绊线时发一条微信通知——人不在网页上也能知道。设置页选渠道：Server酱（微信扫码拿 SendKey，最省事）、PushPlus、企业微信群机器人；「发一条测试推送」当场验证。fire-and-forget，推送失败绝不影响任务 |
+| 设置页 | 首页右上「设置」：推送开关、渠道、key、测试按钮；运行时改的存应用目录下的 `data/notify.json`（优先于 `config.toml [notify]`） |
 | 设备管理 | 查看已配对设备，单独吊销（手机丢了不用改根凭证） |
 
 ### 电脑上（命令行）
 
 `agents` 检测 Agent 可用性 · `projects` 扫描项目与会话并落库 · `run` 跑真实任务 ·
-`tasks` / `replay` 查看与回放 · `serve` 起服务 · `code` / `devices` / `revoke` 管配对与设备。
+`tasks` / `replay` 查看与回放 · `serve` 起服务（`--open` 起来就自动开浏览器，exe 场景用）·
+`code` / `devices` / `revoke` 管配对与设备 ·
+`url` 打主机登录链接（浏览器主机身份丢了时的回头路）。
 
 `run` 和 `replay` 是配成一对的：`run` 出来的每条事件都必须能在库里按原顺序一模一样地
 放出来——这正是断线恢复所依赖的那个查询。
@@ -61,6 +69,7 @@ Local Gateway  (Python 3.12 / aiohttp)
     ├── store.py        SQLite：任务状态与事件持久化（标准库 sqlite3，不引 ORM）
     ├── runner.py       任务生命周期状态机
     ├── permissions.py  权限通道：绊线判定（纯函数）
+    ├── notify.py       微信推送：任务终态/审批/绊线 → Server酱 / PushPlus / 企业微信
     ├── auth.py         两套凭证：主机 token / 设备凭证
     └── adapters/
           base.py       AgentAdapter 抽象
@@ -68,6 +77,10 @@ Local Gateway  (Python 3.12 / aiohttp)
                  │
                  ▼  headless
             Claude Code CLI  (cwd = 目标项目路径)
+          opencode/     OpenCode 实现（serve 进程共享 / v1 HTTP / SSE）
+                 │
+                 ▼  HTTP
+            opencode serve    (一个网关一个 serve，按目录切项目)
 ```
 
 **分层原则**：`runner` / `permissions` / `adapters` 只依赖 `EventBus` 和 `Store`，
@@ -91,6 +104,14 @@ Local Gateway  (Python 3.12 / aiohttp)
 ## 快速开始
 
 **环境要求**：Python 3.12+，本机装有 Claude Code CLI（`claude` 在 PATH 上）。
+
+OpenCode 不是必须的。要接入时：PATH 上有 `opencode` 就自动识别；从源码跑的
+（本机就是这样）在 `config.toml` 里配一条启动命令：
+
+```toml
+[opencode]
+command = ["C:/Users/game/.bun/bin/bun.exe", "run", "--cwd", "D:/PythonProjects/opencode/packages/opencode", "src/index.ts"]
+```
 
 ```bash
 pip install -r requirements.txt
@@ -122,7 +143,7 @@ Remote Agent Workspace · Gateway
 人就在电脑前的话，也可以直接：
 
 ```
-python -c "from pathlib import Path; print('http://127.0.0.1:8765/?token=' + Path('data/token.txt').read_text().strip())"
+python -c "from gateway.config import load_config; c = load_config(); print(f'http://127.0.0.1:{c.port}/?token={c.token}')"
 ```
 
 **端口被占**时网关会明确报错并建议换一个，不会先打印一个用不了的配对码：
@@ -140,11 +161,30 @@ python -m gateway code --port 8766
 配对码只活在 `serve` 进程的内存里，不落库、重启即换，所以这条命令必须去问正在跑的那个
 进程——它连不上就会直接说"服务没跑"，而不是给你一个永远配不上的假码。
 
+**手机从外网连接**（人不在家里 Wi-Fi 内也能用）：`config.toml` 里配 `[server] public_url`
+指向一条 Cloudflare 临时隧道（`cloudflared tunnel --url http://localhost:8765`），
+监控台右侧的二维码就会变成公网地址，手机扫码即进。临时隧道断线后旧网址会永久作废
+（手机报 Error 1016 / 530），**双击项目根目录的「重连隧道.cmd」**即可一键恢复：
+换新网址 → 更新配置 → 重启网关，一次完成；电脑重启后的冷启动也是双击它。
+
 想先不碰真实 API 看看界面，可以跑一个只读任务：
 
 ```bash
 python -m gateway run --prompt "读一下 README.md，用一句话说这个项目做什么" --autonomy read_only
 ```
+
+### 打包成 exe（给不用命令行的人）
+
+```cmd
+build_exe.cmd
+```
+
+产物 `dist\RemoteAgent.exe`，单文件、双击就跑：自动在本机浏览器打开控制台
+（带主机登录链接，不用手抄 token），命令行参数与 `python -m gateway` 完全一致
+（比如 `RemoteAgent.exe serve --port 8765`）。配置和数据统一放在 **`%LOCALAPPDATA%\RemoteAgent\`**——
+和 `python -m gateway` 读的是同一份，两种启动方式看到的项目、配对、历史完全一样；
+exe 拷到哪个文件夹都连同一份数据。给别人用：对方机器首次运行自动生成全新配置
+（想换位置设环境变量 `REMOTE_AGENT_HOME`）。
 
 ## 测试与验收
 
@@ -207,7 +247,7 @@ Base64 解码后 `iex`、`-join` 拼参数，任何正则清单都拦不住。
 
 ### 4. 主机 token 不过期、不可吊销
 
-`data/token.txt` 是根凭证。改它不影响已配对的设备凭证（两套是独立的），
+应用目录下的 `data/token.txt`（`%LOCALAPPDATA%\RemoteAgent\data\`）是根凭证。改它不影响已配对的设备凭证（两套是独立的），
 但持有它的人等于持有这台机器。
 
 ### 5. 配对限流的状态在内存里
@@ -218,13 +258,22 @@ Base64 解码后 `iex`、`-join` 拼参数，任何正则清单都拦不住。
 **限流是前提不是优化**：6 位码只有 20 bit 熵，配上无限次尝试是纸糊的；
 配上 5 次尝试，猜中概率是 10⁻⁶ 量级。将来若有人"优化"掉限流，配对的强度会一起塌掉。
 
-### 6. 只接了 Claude Code，且本机后端不是 Anthropic 官方
+### 6. OpenCode 的会话正文读不了，非 git 目录扫不到
 
-Codex 和 OpenCode 的接入做过源码级调研（结论在 `docs/adapter-extension-notes.md`），
-**但没有实测验证过**。抽象层的形状能装下它们，真去接的时候仍要重新走一遍探针。
+OpenCode 已接入（`opencode serve` + v1 HTTP，探针与端到端验证齐全），但有三个已知缺口：
+
+- **会话正文读不了**：点进 OpenCode 的历史会话只看到提示，看不到聊天记录
+  （Claude 的 JSONL 会话文件才解析得出正文）。**续接不受影响**——续接靠
+  native_session_id，不带正文也能继续。
+- **非 git 目录的会话扫不到**：OpenCode 把不是 git 仓库的目录一律挂到 `global`
+  兜底项目下，没法按项目枚举。所以临时目录、随手跑的目录不会出现在项目列表里
+  （探针目录正好被这条挡掉），但也意味着在这种目录里的真实工作要续接得靠任务页。
+- **档位跟着会话走**：OpenCode 的权限规则集在**建会话时**一次性交给它，
+  之后改不了。给一个会话续接任务时沿用的是创建时的档位边界，中途换档不生效。
 
 另外本机 Claude Code 的后端是 `deepseek-flash`、`apiKeySource: none`，
 stderr 会报 `unrecognized_model`。功能基本可用，但这是**未验证依赖**。
+OpenCode 的后端同样是用户自配的 DeepSeek（`~/.config/opencode/opencode.json`）。
 
 ### 7. 其他
 
@@ -251,8 +300,10 @@ stderr 会报 `unrecognized_model`。功能基本可用，但这是**未验证�
 
 - [ ] **Git 集成**：在项目页只读展示 `status` / `diff` / `log`（原型书 Phase 9）
 - [ ] **并发与任务队列**：多任务排队、每项目并发上限、成本上限（`--max-budget-usd` 已探明可用）
-- [ ] **接入第二个 Agent**：Codex 或 OpenCode，用来检验抽象层是不是真的够用
-      （调研笔记里的两个缺口都指向权限通道，见 `docs/adapter-extension-notes.md` 末尾）
+- [x] **接入第二个 Agent**：OpenCode 已接入（serve + v1 HTTP + SSE，含端到端验证），
+      抽象层没有因此改动核心——"新增 Agent = 新增子包 + 注册"成立。
+      Codex 尚未接入（调研见 `docs/adapter-extension-notes.md`）
+- [ ] **OpenCode 会话正文**：接 `GET /session/:id/message`，把历史会话页补齐
 
 **工程债：**
 
@@ -275,7 +326,7 @@ RemoteAgent/
 ├── docs/
 │   ├── security-notes.md            凭证模型与已知限制
 │   └── adapter-extension-notes.md   接新 Agent 之前必读
-├── data/               运行时数据：token 与 SQLite 库（gitignore，绝不提交）
+└── （运行时数据不在仓库里：%LOCALAPPDATA%\RemoteAgent\data\，token 与 SQLite 库都在这）
 └── RemoteAgent项目原型书.md          产品设计文档
 ```
 
@@ -284,18 +335,20 @@ RemoteAgent/
 
 ## 安全须知
 
-- **`data/` 绝不提交**。里面有 `token.txt`（主机根凭证）和 `gateway.db`（含设备凭证
-  的哈希）。已在 `.gitignore` 里，别去掉。
+- **运行数据目录绝不外传**：`%LOCALAPPDATA%\RemoteAgent\data\` 里有 `token.txt`
+  （主机根凭证）和 `gateway.db`（含设备凭证的哈希）。仓库里的 `data/` 是历史遗留，
+  同样别提交。
 - 网关默认监听 `0.0.0.0`，**整个局域网可达**。在咖啡厅、公司网络这类环境里要么
   换 `--host 127.0.0.1`，要么确保你能接受同网段的人访问这个页面。
 - 手机丢了 / 设备丢了：`python -m gateway devices` 找到它，`python -m gateway revoke <id>`。
-- 怀疑根凭证泄露：删掉 `data/token.txt` 重启网关会重新生成（已配对的设备不受影响，
-  因为设备凭证是独立的）。
+- 怀疑根凭证泄露：删掉应用目录下的 `data/token.txt` 重启网关会重新生成（已配对的
+  设备不受影响，因为设备凭证是独立的）。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
+| `项目进展与路线图.md` | 当前完成度全景：已完成功能、已知限制、下一步计划 |
 | `RemoteAgent项目原型书.md` | 产品设计：目标、能力模型、演进阶段 |
 | `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
 | `docs/adapter-extension-notes.md` | 接 Codex / OpenCode 之前必读：三个会让人挂死的冲突 |
