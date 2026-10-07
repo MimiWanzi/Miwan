@@ -501,6 +501,10 @@ async def session_messages(request: web.Request) -> web.Response:
     project_id = request.match_info["project_id"]
     native_id = request.match_info["native_session_id"]
 
+    project = ctx.store.get_project(project_id)
+    if project is None:
+        return json_error(f"没有这个项目：{project_id}", 404)
+
     session = next(
         (s for s in ctx.store.list_sessions(project_id) if s.native_session_id == native_id),
         None,
@@ -510,7 +514,10 @@ async def session_messages(request: web.Request) -> web.Response:
 
     limit = _int_param(request, "limit", DEFAULT_HISTORY_LIMIT, 1, MAX_HISTORY_LIMIT)
     adapter_cls = get(session.agent_id)
-    messages = adapter_cls.read_history(native_id, limit) if adapter_cls else None
+    messages = (
+        await adapter_cls.read_history(native_id, limit, directory=project.path)
+        if adapter_cls else None
+    )
     if messages is None:
         return json_error(f"{session.agent_id or '该 Agent'} 还不支持查看会话历史", 400)
     return json_response({"session": _dump(session), "messages": messages})

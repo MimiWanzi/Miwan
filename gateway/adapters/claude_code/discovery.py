@@ -26,6 +26,7 @@ from pathlib import Path
 
 from ...models import Project, Session
 from ..base import BlockFilter, ScanResult, stable_id
+from ..history import TEXT_LIMIT, tool_detail
 
 #: 每个 JSONL 最多读多少行来抽取元信息。
 #: 不读整个文件是刻意的——单个会话文件可以到几百 KB，全读会让扫描变慢且吃内存，
@@ -185,7 +186,7 @@ def scan(
 
 #: 单条消息文本的截断长度。会话文件里塞得下整个文件的内容（Read/Write 的全文
 #: 都在里面），原样转发会让"看看聊了什么"的请求背上几 MB。
-HISTORY_TEXT_LIMIT = 2000
+HISTORY_TEXT_LIMIT = TEXT_LIMIT
 
 
 def _history_ts(record: dict) -> float | None:
@@ -197,18 +198,6 @@ def _history_ts(record: dict) -> float | None:
         return datetime.fromisoformat(raw).timestamp()
     except ValueError:
         return None
-
-
-def _history_tool_detail(input_data: object) -> str | None:
-    """从工具入参里挑一行最有信息量的摘要，规则与前端 ``ARG_FIELD`` 同思路。"""
-    if not isinstance(input_data, dict) or not input_data:
-        return None
-    for key in ("file_path", "notebook_path", "command", "pattern", "path", "url", "query"):
-        value = input_data.get(key)
-        if value:
-            return f"{key}={str(value)[:120]}"
-    first = next(iter(input_data.values()))
-    return str(first)[:120]
 
 
 def read_history(root: Path, native_session_id: str, limit: int = 60) -> list[dict]:
@@ -279,7 +268,7 @@ def read_history(root: Path, native_session_id: str, limit: int = 60) -> list[di
                         messages.append({
                             "role": kind,
                             "tool": block.get("name") or "?",
-                            "detail": _history_tool_detail(block.get("input")),
+                            "detail": tool_detail(block.get("input")),
                             "ts": ts,
                         })
                     # tool_result 不出现：它在 user 记录里，但没有 text block，天然被滤掉

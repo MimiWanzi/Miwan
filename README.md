@@ -348,8 +348,13 @@ RemoteAgent/
 
 | 文档 | 内容 |
 |---|---|
-| `项目进展与路线图.md` | 当前完成度全景：已完成功能、已知限制、下一步计划 |
-| `RemoteAgent项目原型书.md` | 产品设计：目标、能力模型、演进阶段 |
+| `CLAUDE.md` | AI 修改代码必须遵守的工程规则 |
+| `docs/roadmap.md` | 接下来建设什么（按代码现状标注各阶段完成度） |
+| `docs/architecture.md` | 系统为什么这么设计、模块如何协作、术语约定 |
+| `docs/product.md` | 产品定位：用户是谁、解决什么问题、怎么演进 |
+| `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
+| `docs/adapter-extension-notes.md` | 接 Codex / OpenCode 之前必读：三个会让人挂死的冲突 |
+| `RemoteAgent项目原型书.md` | 早期产品设计：目标、能力模型、演进阶段（历史文档） |
 | `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
 | `docs/adapter-extension-notes.md` | 接 Codex / OpenCode 之前必读：三个会让人挂死的冲突 |
 

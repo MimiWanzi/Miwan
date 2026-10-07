@@ -1,29 +1,25 @@
-"""Claude Code 原始事件流 → 归一化事件。
+"""Anthropic 风格 stream-json 协议 → 归一化事件。
 
-这是 Adapter 层最核心的一块：**前端只认这里产出的东西**。
-把 Claude 的 stream-json 格式写进前端，加第二个 Agent 时就要重写前端。
-
-单独成文件而不是塞进 session.py，是因为它最容易随 Claude Code 版本变化，
-需要能被单独阅读和单独修改。
-
---------------------------------------------------------------------------
-实测确定的映射（探针 P1，原始样本在 probes/out/p1.jsonl）
---------------------------------------------------------------------------
+**这是协议解析器，不属于任何一个 Agent。** Claude Code 与 CodeBuddy（经实测：
+2.156.0，其 system/init、assistant、user、result 记录与本模块处理的形状一致）
+都说这套方言，所以两个 Adapter 共用这里的 Mapper，而不是各抄一份漂移。
 
 顶层 4 种 type：
 
     system     subtype=init            → task_started
-               subtype=thinking_tokens → **丢弃**（见下）
+               subtype=其他            → 丢弃（status/thinking_tokens 等，见下）
     assistant  content.text            → assistant_text
                content.tool_use        → tool_call
                content.thinking        → 丢弃
     user       content.tool_result     → tool_result（注意：工具结果在 user 消息里）
     result     subtype=success/error   → task_completed / task_failed
 
-两条硬性要求都由实测得出：
+两条硬性要求都由实测得出（Claude 探针 P1，原始样本 probes/out/p1.jsonl）：
 
-  1. **丢弃 system/thinking_tokens**：P1 的 48 行事件里 40 行是它，
-     内容只有 token 计数。不丢的话事件流 83% 是噪音。
+  1. **丢弃计数型 system 记录**：thinking_tokens 一类只有 token 计数，
+     不丢的话事件流 83% 是噪音。CodeBuddy 还会发 subtype=status（内容为
+     null）与 file-history-snapshot，同样零信息量，一并按噪音处理。
+     各 Adapter 有专属噪音时，在自己的 session 里先滤掉再喂进来。
 
   2. **保留 parent_tool_use_id**：主线程为 null，子 Agent 为发起它的
      tool_use.id。不带这个字段，子 Agent 的输出会串进主线，UI 上表现为
@@ -35,11 +31,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ...events import EventType
+from ..events import EventType
 
 #: 单个工具结果最多保留多少字符。工具结果经常是整个文件内容，
 #: 全量推送会让事件表爆炸、手机流量也不划算。
 TOOL_RESULT_LIMIT = 4000
+
+#: 零信息量的 system 子类型——纯粹是计数/状态心跳。
+NOISE_SYSTEM_SUBTYPES = frozenset({"thinking_tokens", "status"})
+
+#: 零信息量的顶层记录类型（会话文件的快照/撤销簿之类的伴随流）。
+NOISE_TOP_TYPES = frozenset({"file-history-snapshot"})
 
 
 def flatten_content(content: Any) -> str:
@@ -98,6 +100,8 @@ class Mapper:
         """一条原始记录 → 若干归一化事件。认不出来的一律降级为 raw，不丢信息。"""
         kind = record.get("type")
 
+        if kind in NOISE_TOP_TYPES:
+            return []
         if kind == "system":
             return self._system(record)
         if kind == "assistant":
@@ -113,8 +117,8 @@ class Mapper:
     def _system(self, record: dict) -> list[tuple[EventType, dict]]:
         subtype = record.get("subtype")
 
-        if subtype == "thinking_tokens":
-            return []  # 实测占事件量 83%，只有 token 计数，无信息量
+        if subtype in NOISE_SYSTEM_SUBTYPES:
+            return []
 
         if subtype != "init":
             return [(EventType.RAW, {"reason": f"未知 system 子类型 {subtype}", "record": record})]
@@ -183,7 +187,7 @@ class Mapper:
         return events
 
     def _user(self, record: dict) -> list[tuple[EventType, dict]]:
-        """工具结果藏在 user 消息里——这是 Claude Code 流格式里最反直觉的一点。"""
+        """工具结果藏在 user 消息里——这是这套流格式里最反直觉的一点。"""
         parent = record.get("parent_tool_use_id")
         message = record.get("message") or {}
         content = message.get("content")
@@ -253,7 +257,12 @@ class Mapper:
             "num_turns": result.get("num_turns"),
         }
         if not ok:
-            payload["error"] = result.get("result") or result.get("error")
+            # 错误文本的字段各家不同：Claude 在 result/error，CodeBuddy 是
+            # errors 数组（实测 2.156.0：认证失败时为 ["Authentication required…"]）
+            error = result.get("result") or result.get("error")
+            if not error and isinstance(result.get("errors"), list):
+                error = "；".join(str(e) for e in result["errors"] if e)
+            payload["error"] = error
             events.append((EventType.TASK_FAILED, payload))
         else:
             events.append((EventType.TASK_COMPLETED, payload))

@@ -11,31 +11,23 @@ import os
 import shutil
 from pathlib import Path
 
-#: 实测确认：本机的 claude CLI 是原生可执行文件（单文件 243MB）。
-#: 直接调用它能绕开 .cmd / .ps1 shim——shim 会插一层 cmd.exe，
-#: 而我们要用的是双工管道，中间多一层 shell 解释器是纯粹的干扰源。
-EXE_CANDIDATES = (
-    Path(
-        r"E:\ProgramFiles\nodejs\node_global\node_modules"
-        r"\@anthropic-ai\claude-code\bin\claude.exe"
-    ),
-)
-
 #: 允许用环境变量覆盖，便于换机器或不走默认安装路径。
 EXE_ENV = "REMOTE_AGENT_CLAUDE_EXE"
 PROJECTS_DIR_ENV = "REMOTE_AGENT_CLAUDE_PROJECTS_DIR"
 
 
 def find_exe() -> Path | None:
-    """找 claude CLI。找不到返回 None——没装是正常情况，不是错误。"""
+    """找 claude CLI。找不到返回 None——没装是正常情况，不是错误。
+
+    只认 ``shutil.which``：CLI 的安装位置随安装方式变（npm 全局、原生
+    安装器各不相同），写死候选路径只会留下 silently 失效的死配置。
+    which 找到的若是 shim（.cmd/.ps1），上面 REMOTE_AGENT_CLAUDE_EXE
+    可以指到真正的原生可执行文件——双工管道不希望中间多一层 shell。
+    """
     override = os.environ.get(EXE_ENV)
     if override:
         candidate = Path(override)
         return candidate if candidate.exists() else None
-
-    for candidate in EXE_CANDIDATES:
-        if candidate.exists():
-            return candidate
 
     found = shutil.which("claude")
     return Path(found) if found else None

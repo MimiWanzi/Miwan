@@ -27,15 +27,14 @@ from .session import ClaudeSession
 
 #: 本 Adapter 当前具备的能力。
 #:
-#: ``permission_gate`` 是 False，但这不是因为 Claude Code 做不到——
-#: 它恰恰是三种 Agent 里唯一原生支持运行时权限拦截的（`--permission-prompts host`）。
-#: 标 False 是因为**第 6 层还没实现**，而核心层拿这个标志做功能降级判断，
-#: 所以它必须反映实际可用性而不是理论能力。第 6 层落地后这里改成 True 即可。
+#: ``permission_gate`` 是 True：EDIT/FULL 档下权限点经
+#: ``--permission-prompt-tool`` 送达网关的 MCP 审批通道，等设备决策
+#: （协议面 31/31、真 CLI 全链路 7/7，见 probes/verify_mcp_approval.py）。
 CAPABILITIES = AgentCapabilities(
     streaming_events=True,
     resume=True,
     interrupt=True,
-    permission_gate=False,
+    permission_gate=True,
     cost_reporting=True,
     history_discovery=True,
 )
@@ -108,8 +107,17 @@ class ClaudeCodeAdapter(AgentAdapter):
         return discovery.scan(projects_dir(), blocked, agent_id=self.agent_id)
 
     @classmethod
-    def read_history(cls, native_session_id: str, limit: int = 60) -> list[dict] | None:
-        """会话正文在自己的 JSONL 里，解析是 :mod:`discovery` 的事。"""
+    async def read_history(
+        cls,
+        native_session_id: str,
+        limit: int = 60,
+        *,
+        directory: str | None = None,
+    ) -> list[dict] | None:
+        """会话正文在自己的 JSONL 里，解析是 :mod:`discovery` 的事。
+
+        ``directory`` 用不上：文件按 session uuid 的文件名找，与项目路径无关。
+        """
         return discovery.read_history(projects_dir(), native_session_id, limit)
 
     def create_session(
