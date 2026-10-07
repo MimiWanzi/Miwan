@@ -21,8 +21,8 @@ from pathlib import Path
 from ...events import EventType
 from ...permissions import Policy
 from ..base import AgentSession, AutonomyPolicy, EmitFn, RunOutcome
+from ..anthropic_stream import Mapper
 from .locate import clean_env
-from .normalize import Mapper
 
 #: READ_ONLY 档位下开放的工具。
 #: 用**限定工具集**而不是靠权限提示拒绝，是因为前者是确定性的：
@@ -47,8 +47,8 @@ FULL_TOOLS = (
     "WebFetch", "WebSearch",
     "Task", "TodoWrite",
 )
-#: 当前 CLI 里 shell 工具的名字是 ``Bash``（Windows 上也是）。历史上这里
-#: 只写了 ``PowerShell``，shell 就整体静默失效——CLI 改名/加工具不会报错，
+#: 当前 CLI 在 Windows 上暴露的 shell 工具是 ``PowerShell``，POSIX 上是
+#: ``Bash``——两个都留着，按平台各自生效。CLI 改名/加工具不会报错，
 #: 只会走到权限提示然后无人应答。现在有审批通道兜底（EDIT/FULL 档漏掉
 #: 的工具会"问人"而不是"拒绝"），但这份清单仍要定期和 system/init 的
 #: tools 数组对一遍，理由见模块顶部 FULL_TOOLS 的注释。
@@ -159,6 +159,14 @@ class ClaudeSession(AgentSession):
 
         if self._budget_usd:
             args += ["--max-budget-usd", str(self._budget_usd)]
+
+        # 强制关掉工具延迟搜索。宿主的 settings.json 若开了 ENABLE_TOOL_SEARCH，
+        # shell 工具会被藏到 ToolSearch 后面按需加载，而第三方后端（GLM 等）
+        # 的 ToolSearch 匹配恒为空——实测（probes/scratch/check_tools_env.py）
+        # 表现为任务里"没有任何 shell 工具可用"。无人值守任务要的是确定的
+        # 工具集，不是省 context；--settings 的优先级高于用户 settings.json，
+        # 且是合并不是替换（后端/模型等其他配置不受影响）。
+        args += ["--settings", '{"env":{"ENABLE_TOOL_SEARCH":"false"}}']
 
         return args
 

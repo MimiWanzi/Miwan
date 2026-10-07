@@ -1231,7 +1231,7 @@ function buildOnboardingCard(agentsPayload, me) {
   const agents = agentsPayload.agents || [];
   const ready = agents.filter((a) => a.status === "ready");
   const missing = agents.filter((a) => a.status !== "ready");
-  const names = ready.map((a) => a.name).join("、") || "还没检测到可用的 Agent——先确认 claude / opencode 能在电脑上跑";
+  const names = ready.map((a) => a.name).join("、") || "还没检测到可用的 Agent——先确认 claude / opencode / workbuddy 能在电脑上跑";
 
   const pairBtn = el("button", { class: "primary", text: "手机扫码配对" });
   const pairBox = el("div");
@@ -1286,7 +1286,7 @@ async function viewProjects() {
   primeAgentLabels(agentsPayload);
   if (!ready.length) {
     nodes.push(el("div", { class: "banner", text:
-      "没有检测到可用的 Agent。任务可以提交，但会立刻失败——先确认 claude / opencode 命令能用。" }));
+      "没有检测到可用的 Agent。任务可以提交，但会立刻失败——先确认 claude / opencode / workbuddy 命令能用。" }));
   }
 
   const refreshBtn = el("button", { class: "ghost", text: "重新扫描" });

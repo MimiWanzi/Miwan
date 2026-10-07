@@ -136,13 +136,14 @@ class AgentCapabilities(BaseModel):
 
       - **Codex**：非交互模式压根没有权限提示这个环节，只能用
         :class:`AutonomyPolicy` 一次性决定。
-      - **Claude（当前）**：第 6 层的声明式管道能**拦**（``--disallowedTools``
-        实测有效），但拦下来就是当场拒绝，**没法先问手机再决定**——
-        那需要 ``--permission-prompt-tool`` 指到一个 MCP server 上，
-        属于同一层的并行探针，还没验证。
+      - **OpenCode（当前）**：只有 deny 型钩子，能拦不能问。
 
-    所以这里仍然标 False：等"问一下"真的能送达手机，它才会变成 True。
-    标 True 而实际只能拒绝，会让上层以为可以弹审批框。
+    Claude Code 为 True：EDIT/FULL 档下权限点经 ``--permission-prompt-tool``
+    送达网关的 MCP 审批通道、等设备决策。真 CLI 全链路见
+    ``probes/verify_mcp_approval.py``，协议面见
+    ``probes/scratch/check_mcp_approval_http.py``。
+    标 True 而实际只能拒绝，会让上层以为可以弹审批框；反过来，
+    真的能问人的时候标 False，上层就只能展示"被拒绝"而不是"等你批准"。
     """
 
     cost_reporting: bool = False
@@ -313,12 +314,27 @@ class AgentAdapter(ABC):
         """
 
     @classmethod
-    def read_history(cls, native_session_id: str, limit: int = 60) -> list[dict] | None:
+    async def read_history(
+        cls,
+        native_session_id: str,
+        limit: int = 60,
+        *,
+        directory: str | None = None,
+    ) -> list[dict] | None:
         """读一个历史会话的最近聊天记录（只读），最旧的在前。
+
+        **async 是刻意的**，理由同 :meth:`discover_projects`：Claude 扫本地
+        文件，OpenCode 要问它的 HTTP 服务。
+
+        ``directory`` 是会话所属项目的路径：OpenCode 的接口按目录隔离，
+        没它找不到会话（调用方从库里的项目记录拿）；扫本地文件的 Adapter
+        用不上，可以无视。调用方（API 层）必须先用库确认会话归属项目，
+        才允许走到这一步。
 
         返回 None 表示这个 Agent 不支持——UI 据此收起入口，而不是展示一个
         空页面假装没事。会话正文的存放格式是各 Agent 的私货，核心层不猜，
-        所以默认不支持，由具体 Adapter 覆写。
+        所以默认不支持，由具体 Adapter 覆写；消息条目的公共形状见
+        :mod:`gateway.adapters.history`。
         """
         return None
 

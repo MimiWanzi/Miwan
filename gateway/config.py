@@ -73,6 +73,7 @@ _KNOWN_KEYS: dict[str, set[str]] = {
     "autonomy": {"default"},
     "auth": {"token"},
     "opencode": {"command"},
+    "workbuddy": {"command"},
     "notify": {"enabled", "channel", "key", "webhook_url"},
 }
 
@@ -94,6 +95,10 @@ class Config:
     #: ``command = ["bun", "run", "--cwd", "D:/…/packages/opencode", "src/index.ts"]``。
     #: 留空 = 从 PATH 上找 ``opencode``。
     opencode_command: tuple[str, ...] = ()
+    #: WorkBuddy（内置 CodeBuddy CLI）的启动命令（argv 前缀）。留空 = 自动找：
+    #: PATH 上的 codebuddy / cbc，或 WorkBuddy 安装目录里内置的那份
+    #: （注册表卸载项反查，需要机器上有 Node）。
+    workbuddy_command: tuple[str, ...] = ()
     #: 微信推送的初始值（运行时在设置页里改的存 ``data/notify.json``，优先于这里）。
     #: channel 取 gateway.notify.CHANNELS 之一；key 是 Server酱 SendKey / PushPlus
     #: token；webhook_url 是企业微信群机器人的完整地址。
@@ -117,6 +122,18 @@ class Config:
     @property
     def blocked_file(self) -> Path:
         return self.data_dir / "blocked_projects.txt"
+
+
+def _parse_command(section: str, raw: object) -> tuple[str, ...]:
+    """``[xxx] command`` 的统一解析：字符串当单项，数组逐项转 str。"""
+    if isinstance(raw, str):
+        return (raw,)
+    if isinstance(raw, list):
+        command = tuple(str(part) for part in raw if str(part).strip())
+        if len(command) != len(raw):
+            raise SystemExit(f"[{section}] command 里有空字符串项")
+        return command
+    raise SystemExit(f'[{section}] command 要写成字符串数组，如 ["{section}"]')
 
 
 def default_blocked_paths() -> tuple[Path, ...]:
@@ -272,6 +289,7 @@ def load_config(path: str | Path | None = None) -> Config:
     autonomy = section("autonomy")
     auth = section("auth")
     opencode = section("opencode")
+    workbuddy = section("workbuddy")
     notify = section("notify")
 
     host = str(server.get("host", "0.0.0.0"))
@@ -304,15 +322,8 @@ def load_config(path: str | Path | None = None) -> Config:
         options = "、".join(p.value for p in AutonomyPolicy)
         raise SystemExit(f"[autonomy] default 只能是 {options}：{raw_autonomy!r}") from None
 
-    raw_command = opencode.get("command", [])
-    if isinstance(raw_command, str):
-        opencode_command = (raw_command,)
-    elif isinstance(raw_command, list):
-        opencode_command = tuple(str(part) for part in raw_command if str(part).strip())
-        if len(opencode_command) != len(raw_command):
-            raise SystemExit("[opencode] command 里有空字符串项")
-    else:
-        raise SystemExit("[opencode] command 要写成字符串数组，如 [\"opencode\"]")
+    opencode_command = _parse_command("opencode", opencode.get("command", []))
+    workbuddy_command = _parse_command("workbuddy", workbuddy.get("command", []))
 
     notify_channel = str(notify.get("channel", "serverchan")).strip() or "serverchan"
 
@@ -335,6 +346,7 @@ def load_config(path: str | Path | None = None) -> Config:
         default_autonomy=default_autonomy,
         public_url=public_url,
         opencode_command=opencode_command,
+        workbuddy_command=workbuddy_command,
         notify_enabled=bool(notify.get("enabled", False)),
         notify_channel=notify_channel,
         notify_key=str(notify.get("key", "") or ""),

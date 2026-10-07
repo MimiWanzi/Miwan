@@ -116,9 +116,11 @@ async def shutdown_adapters() -> None:
 
 from .claude_code import ClaudeCodeAdapter  # noqa: E402
 from .opencode import OpenCodeAdapter  # noqa: E402
+from .workbuddy import WorkBuddyAdapter  # noqa: E402
 
 register(ClaudeCodeAdapter)
 register(OpenCodeAdapter)
+register(WorkBuddyAdapter)
 
 #: 尚未实现，列在这里是为了让"扩展路径"可见而不是只存在于文档里。
 #: 接 Codex 时在这里 register(CodexAdapter) 即可。

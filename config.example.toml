@@ -42,6 +42,14 @@ token = ""
 # 也可以只写一个字符串（等价于单元素数组）；.cmd 垫片会自动套 cmd /c。
 command = []
 
+[workbuddy]
+# WorkBuddy（内置 CodeBuddy CLI）的启动命令（argv 前缀）。留空 = 自动找：
+# PATH 上的 codebuddy / cbc，或 WorkBuddy 安装目录里内置的那份
+# （注册表反查安装位置，机器上要有 Node ≥ 18.20.8）。
+# 一般不用配；CLI 装在别处时写全，例如：
+# command = ["node", "D:/path/to/WorkBuddy/resources/app.asar.unpacked/cli/bin/codebuddy"]
+command = []
+
 [notify]
 # 微信推送：任务完成 / 失败 / 等审批 / 撞绊线时发一条通知。
 # 这里只是初始值；在网页「设置」页里改的会存到 data/notify.json，优先于本节。
