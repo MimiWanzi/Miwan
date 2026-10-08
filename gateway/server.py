@@ -38,7 +38,7 @@ from aiohttp import web
 from . import api, mcp, ws
 from .api import json_response, lan_ip
 from .auth import TOKEN_COOKIE, AuthService, set_token_cookie
-from .config import Config
+from .config import CONFIG_PATH, Config
 from .context import CTX, DEVICE_KEY, GatewayContext, get_ctx
 from .events import EventBus
 from .notify import Notifier
@@ -463,7 +463,7 @@ def _print_banner(config: Config, ctx: GatewayContext) -> None:
         f"          {code[:3]} {code[3:]}          ← 15 分钟内有效，只能配一台设备",
         "",
         f"  静态页面  {config.web_dir} {web_note}".rstrip(),
-        f"  配置      {config.source or '内置默认（仓库根没有 config.toml）'}",
+        f"  配置      {config.source or f'内置默认（{CONFIG_PATH} 不存在）'}",
         f"  数据库    {config.db_path}",
         f"  主机凭证  {config.token_file}（换码：{code_cmd}）",
         "",

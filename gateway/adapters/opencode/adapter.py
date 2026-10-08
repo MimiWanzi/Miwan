@@ -78,11 +78,18 @@ class OpenCodeAdapter(AgentAdapter):
         """没装是正常情况，用 MISSING 表达，**不抛异常**。"""
         command = discovery.find_command()
         if command is None:
+            # 延迟导入：config → adapters.base，模块级导入会成环（同 discovery.find_command）
+            from ...config import CONFIG_PATH
+
             return AgentInfo(
                 id=cls.agent_id,
                 name=cls.display_name,
                 status=AgentStatus.MISSING,
-                detail="PATH 上没有 opencode，config.toml 也没配 [opencode] command",
+                # 把**位置**写进提示语。源码形态的 opencode（没有可执行文件落进 PATH，
+                # 只能靠 config 指路）是唯一需要用户手写配置的场景，而这里正是他
+                # 唯一会看到的地方——不给路径，他就得去翻代码才知道该把文件放哪。
+                detail=f"PATH 上没有 opencode，{CONFIG_PATH} 里也没配 [opencode] command"
+                       f"（位置和格式见仓库里的 config.example.toml）",
                 capabilities=CAPABILITIES,
             )
 
