@@ -4,9 +4,9 @@
 
 配置有四个来源，优先级从高到低（高的覆盖低的）：
 
-  1. 命令行参数（``serve --host / --port / --config``）
+  1. 命令行参数（``serve --host / --port``）
   2. 环境变量 ``REMOTE_AGENT_*``
-  3. TOML 配置文件：``--config`` 指定的路径，或应用目录（Windows 是
+  3. TOML 配置文件：``REMOTE_AGENT_CONFIG`` 指定的路径，或应用目录（Windows 是
      ``%LOCALAPPDATA%\\RemoteAgent``）下的 ``config.toml``
   4. 内置默认值——什么都没配也能起（自部署的第一次体验必须是"直接能跑"）
 

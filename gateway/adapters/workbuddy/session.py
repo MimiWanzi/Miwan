@@ -16,11 +16,15 @@ can_use_tool 就回 ``control_response``（behavior=deny，实测 turn 正常
 permission_id，手机上看得见原因）。``result.permission_denials`` 仍会
 事后汇总。permission_gate=False——没有"等人批准"的通道，只有"自动拒绝"。
 
-旗标形状（2.161.4 --help）：``--tools`` / ``--allowedTools`` /
-``--disallowedTools`` 都是**逗号分隔单值**；空格分隔多值会被静默忽略
-（实测：E2E 里 init 的 tools 数组原样 63 个）。bundled 2.156.0 作兜底
-被拉起时旗标兼容性未逐项验证，但 deny 应答兜底保证最坏结果是"多拒绝"
-而不是"多放行"。
+旗标形状（2.161.4 官方文档核实，曾传错）：三个旗标形状**不同**——
+``--tools`` 是逗号分隔单值（``"Bash,Read"``）；``--allowedTools`` /
+``--disallowedTools`` 是**空格分隔多值**，每条规则一个独立 argv 项
+（``"Bash(git log:*)" "Read"``）。曾把逗号串传给 --allowedTools：整串
+被当成一条字面规则、匹配不到任何工具，allowlist 全体失效、所有工具都走
+控制协议被 deny——而 E2E 仍是绿的（暗号写在 prompt 里、写文件靠
+acceptEdits，都绕开了 allowlist），"绿"掩盖了失效，用户实跑 FULL 档
+Bash 被拒才暴露。bundled 2.156.0 作兜底被拉起时旗标兼容性未逐项验证，
+但 deny 应答兜底保证最坏结果是"多拒绝"而不是"多放行"。
 """
 
 from __future__ import annotations
@@ -124,23 +128,23 @@ class WorkBuddySession(AgentSession):
             args += ["--session-id", self.native_session_id]
 
         if self.autonomy is AutonomyPolicy.READ_ONLY:
-            # 真实边界是 --allowedTools 预批（实测生效）+ 控制协议 deny 兜底。
-            # --tools 照传但**别指望它**：2.161.4 上 init 的 tools 数组不因它
-            # 变化（E2E 实测），留作对 2.156.0/未来版本的尽力边界。
-            joined = ",".join(READ_ONLY_TOOLS)
-            args += ["--tools", joined, "--allowedTools", joined]
+            # 真实边界 = --allowedTools 预批（实测生效）+ 控制协议 deny 兜底。
+            # --tools 照传（逗号串是它的正确形状）但**别指望它**：2.161.4 上
+            # init 的 tools 数组不因它变化，留作对 2.156.0/未来版本的尽力边界。
+            args += ["--tools", ",".join(READ_ONLY_TOOLS),
+                     "--allowedTools", *READ_ONLY_TOOLS]
         elif self.autonomy is AutonomyPolicy.EDIT:
             # acceptEdits 预批文件编辑（实测 Write 直接过）；读类工具显式
             # 预批。Bash/网络类不预批——走控制协议被 deny，模型会如实转述。
             args += ["--permission-mode", "acceptEdits",
-                     "--allowedTools", ",".join(READ_ONLY_TOOLS)]
+                     "--allowedTools", *READ_ONLY_TOOLS]
         elif self.autonomy is AutonomyPolicy.FULL:
             # 按名放行（--allowedTools 是"预先批准"，--tools 是"限定集合"，
             # 混用会把工具集砍掉）
-            args += ["--allowedTools", ",".join(FULL_TOOLS)]
+            args += ["--allowedTools", *FULL_TOOLS]
             disallowed = [g for t in self.policy.tripwires for g in t.disallowed_tools()]
             if disallowed:
-                args += ["--disallowedTools", ",".join(disallowed)]
+                args += ["--disallowedTools", *disallowed]
 
         return args
 
