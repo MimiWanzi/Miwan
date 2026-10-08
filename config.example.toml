@@ -1,10 +1,13 @@
 # Remote Agent 网关配置。
 #
-# 用法：复制本文件为 config.toml（和它放在一起，仓库根），按需改。
+# 用法：复制本文件为 config.toml，放到应用目录（%LOCALAPPDATA%\RemoteAgent\）
+# 按需改；想放别处就用环境变量 REMOTE_AGENT_CONFIG 指定完整路径。
 # 优先级：命令行 --host/--port > 环境变量 REMOTE_AGENT_* > config.toml > 内置默认。
-# 写了不认识的节或键，启动时会点名警告——"配置不生效"先看那里。
+# 写了不认识的节或键，启动时会点名警告——"配置不生效"先看那里
+# （注意：放仓库根的 config.toml 不会被读到，配置文件只在应用目录或
+# REMOTE_AGENT_CONFIG 指定的路径找）。
 #
-# config.toml 里可能有 token，绝不要提交（.gitignore 已挡）。
+# config.toml 里可能有 token，绝不要提交进仓库。
 
 [server]
 # 监听地址。手机/其他设备要访问就保持 0.0.0.0；

@@ -10,6 +10,10 @@
   C（resume_from=A）续聊——--resume 跨进程上下文保持（问 A 里埋的暗号）
   D（edit）撞权限点的命令（ping）——deny-only 不会挂死：没有审批通道的
     CLI 在无人值守时要么沙箱放行、要么静默拒绝，两种都必须走到终态
+  E（full）shell 命令——--allowedTools 预批真的生效（命令零拒绝执行）。
+    这节是后补的：此前 allowlist 传错形状（逗号串被当成一条字面规则），
+    A/C 的暗号在 prompt 上下文里、B 靠 acceptEdits，全都绕开了 allowlist，
+    "绿"掩盖了失效——E 节逼真跑一条 shell 命令，把这个盲区关掉
 
 前置条件：CLI 已登录（凭证在 ~/.codebuddy/.credentials.json）。没登录时
 result.errors 会报 Authentication required——探针会把它识别为 SKIP 提示。
@@ -278,6 +282,21 @@ async def _run(tmp: Path) -> bool:
                   f"无 permission_id={perms[0].get('permission_id') is None}）")
         else:
             print("  [记录] 既无执行证据也无拒权汇报（模型没实际跑命令）")
+
+        # ---- E：FULL 档 allowlist 预批真的生效（shell 命令零拒绝执行）----
+        print("== E：FULL 档 allowlist 生效 ==")
+        _, events, status = await drive(
+            session, base, headers, project_id,
+            "用 shell 工具运行命令：echo cbc-full-ok-2026，然后只回复命令的输出。不要做其他事。",
+            "full",
+        )
+        check(status == "completed", f"任务完成（实际 {status}）"
+              + (f"；失败原因 {failed_reason(events)}" if status != "completed" else ""))
+        perms = payloads_of(events, "permission_request")
+        check(not perms, f"FULL 档零权限拒绝（实际 {len(perms)} 条）"
+              + (f"；首条 {json.dumps(perms[0], ensure_ascii=False)[:150]}" if perms else ""))
+        check(tool_output_contains(events, "cbc-full-ok-2026"),
+              "shell 命令真的执行了（tool_result 含标记串）——allowlist 预批生效")
 
     await _let_sessions_die()
     await runner.cleanup()
