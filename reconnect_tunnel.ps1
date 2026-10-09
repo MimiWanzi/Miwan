@@ -1,6 +1,8 @@
 ﻿# 一键重连临时隧道：换新网址 → 更新 config.toml → 重启网关。
 # 断线的症状：手机打开公网地址报 Error 1016 / 530。双击「重连隧道.cmd」跑一次即可。
 # 免费临时隧道的网址每次重启都会变，所以"重连"就是上面三件事一次做完。
+# 缺 cloudflared（公网隧道组件）不用管：脚本自动从 Cloudflare 官方发布页
+# 下载到 %LOCALAPPDATA%\RemoteAgent\bin\，约 40MB，只需一次。
 #
 # 网关两种形态都认：同目录/dist 下的 RemoteAgent.exe（exe 双击场景）
 # 优先，没有才用 python -m gateway serve（开发场景）。
@@ -17,8 +19,38 @@ $GatewayExe = @((Join-Path $Root "RemoteAgent.exe"), (Join-Path $Root "dist\Remo
     Where-Object { Test-Path $_ } | Select-Object -First 1
 $Python = @("D:\programFiles\miniconda\envs\RemoteAgent\python.exe", "python") |
     Where-Object { $_ -eq "python" -or (Test-Path $_) } | Select-Object -First 1
-$Cloudflared = @("C:\Program Files (x86)\cloudflared\cloudflared.exe", "cloudflared") |
-    Where-Object { $_ -eq "cloudflared" -or (Test-Path $_) } | Select-Object -First 1
+# cloudflared 查找顺序：应用目录（本脚本自动下载的那份）→ 开发机安装位置 → PATH。
+# 都没有就自动下载——普通用户不该被要求认识 cloudflared，缺什么脚本自己补。
+# 下载源固定为 Cloudflare 官方 releases（HTTPS）；落到应用目录，免管理员权限。
+# 先下到 .tmp 再改名：下载半途而废时不会留一个打不开的半截 exe 骗过下次的 Test-Path。
+$CloudflaredLocal = Join-Path $env:LOCALAPPDATA "RemoteAgent\bin\cloudflared.exe"
+if (Test-Path $CloudflaredLocal) {
+    $Cloudflared = $CloudflaredLocal
+} elseif (Test-Path "C:\Program Files (x86)\cloudflared\cloudflared.exe") {
+    $Cloudflared = "C:\Program Files (x86)\cloudflared\cloudflared.exe"
+} elseif (Get-Command cloudflared -ErrorAction SilentlyContinue) {
+    $Cloudflared = "cloudflared"
+} else {
+    Write-Host "==> 没找到 cloudflared（公网隧道组件），自动下载（约 40MB，只需一次）..."
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path $CloudflaredLocal -Parent) | Out-Null
+        # 关进度条：PS 5.1 渲染进度条能让下载慢好几倍，用文字提示代替
+        $ProgressPreference = "SilentlyContinue"
+        Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 `
+            -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
+            -OutFile "$CloudflaredLocal.tmp"
+        Move-Item "$CloudflaredLocal.tmp" $CloudflaredLocal -Force
+        $Cloudflared = $CloudflaredLocal
+        Write-Host "    已下载：$CloudflaredLocal"
+    } catch {
+        Write-Host "隧道组件下载失败：$($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "可任选其一装好后重新双击："
+        Write-Host "  1. winget install Cloudflare.cloudflared"
+        Write-Host "  2. 浏览器打开 https://github.com/cloudflare/cloudflared/releases"
+        Write-Host "     下载 cloudflared-windows-amd64.exe，存为 $CloudflaredLocal"
+        exit 1
+    }
+}
 
 if ($GatewayExe) {
     Write-Host "==> 网关形态：exe（$GatewayExe）"
@@ -73,7 +105,16 @@ Write-Host "==> 更新 config.toml"
 $configPath = Join-Path $env:LOCALAPPDATA "RemoteAgent\config.toml"
 if (Test-Path $configPath) {
     $txt = Get-Content $configPath -Raw -Encoding UTF8
-    $txt = $txt -replace "public_url\s*=\s*`"[^`"]*`"", "public_url = `"$url`""
+    if ($txt -match "(?m)^public_url\s*=") {
+        $txt = $txt -replace "public_url\s*=\s*`"[^`"]*`"", "public_url = `"$url`""
+    } elseif ($txt -match "(?m)^\[server\][ \t]*(#.*)?\r?$") {
+        # 已有 [server] 节但没有 public_url 键：插到节标题下面
+        $txt = $txt -replace "(?m)^(\[server\][^\r\n]*\r?\n)", "`$1public_url = `"$url`"`n"
+    } else {
+        # 新机器的 config.toml 可能只有 [opencode] 之类的节——只会"替换"的旧写法
+        # 在这里落空、原样写回，public_url 永远配不上，二维码停在局域网地址
+        $txt = "[server]`npublic_url = `"$url`"`n`n" + $txt
+    }
 } else {
     $txt = "[server]`npublic_url = `"$url`"`n"
 }
