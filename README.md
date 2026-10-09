@@ -8,8 +8,8 @@
 
 > **当前状态：MVP-0，第 0–8 层已完成。**
 > 端到端链路可用，且有自动化验收兜着（见[测试与验收](#测试与验收)）。
-> 目前只接入了 Claude Code 一个 Agent；传输是明文 HTTP —— 这是明确决定推迟的，
-> 不是漏掉的，见[已知限制](#已知限制)。
+> 已接入 Claude Code / OpenCode / WorkBuddy / Codex 四个 Agent；传输是明文 HTTP ——
+> 这是明确决定推迟的，不是漏掉的，见[已知限制](#已知限制)。
 
 ---
 
@@ -37,7 +37,7 @@
 | 新建项目 | 首页手动登记一个绝对路径当项目（目录不存在可顺手创建）——扫描只找得到被 Agent 用过的目录，新开项目全靠它 |
 | 项目页 | 历史会话列表 + 新建任务表单（接了多个 Agent 时可挑选由谁执行） |
 | 任务页 | **实时事件流**：助手文本、工具调用卡片（含工具名与参数）、工具结果、完成/失败标记；任务结束后可直接在页面底部续接这个会话继续对话（中断/断连的任务也从这里恢复） |
-| 会话历史 | 点进历史会话看最近的聊天记录（用户 / 助手 / 工具调用），并直接在会话里续发任务（读正文仅支持 Claude Code 的会话） |
+| 会话历史 | 点进历史会话看最近的聊天记录（用户 / 助手 / 工具调用），并直接在会话里续发任务（读正文支持 Claude Code / WorkBuddy / Codex 的会话） |
 | 中断 | 一键中断正在跑的任务，状态转为 `cancelled` |
 | 断线恢复 | 连接断了自动重连，按 `seq` 补齐，**不重不漏** |
 | 探活 | 连接被静默黑洞掉（进隧道、Wi-Fi 转蜂窝）时，约 30 秒内自己发现并重连 |
@@ -309,7 +309,9 @@ OpenCode 的后端同样是用户自配的 DeepSeek（`~/.config/opencode/openco
 - [ ] **并发与任务队列**：多任务排队、每项目并发上限、成本上限（`--max-budget-usd` 已探明可用）
 - [x] **接入第二个 Agent**：OpenCode 已接入（serve + v1 HTTP + SSE，含端到端验证），
       抽象层没有因此改动核心——"新增 Agent = 新增子包 + 注册"成立。
-      Codex 尚未接入（调研见 `docs/adapter-extension-notes.md`）
+      Codex 也已接入（2026-10：`codex exec` 每回合一个进程、`-s` 沙箱三档映射、
+      resume 追加同文件，核心零改动；非交互模式无权限提示环节，
+      `permission_gate=False` 是能力事实不是待办）
 - [ ] **OpenCode 会话正文**：接 `GET /session/:id/message`，把历史会话页补齐
 
 **工程债：**
@@ -360,10 +362,10 @@ RemoteAgent/
 | `docs/architecture.md` | 系统为什么这么设计、模块如何协作、术语约定 |
 | `docs/product.md` | 产品定位：用户是谁、解决什么问题、怎么演进 |
 | `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
-| `docs/adapter-extension-notes.md` | 接 Codex / OpenCode 之前必读：三个会让人挂死的冲突 |
+| `docs/adapter-extension-notes.md` | 接新 Agent 之前必读：各家协议差异与实测结论 |
 | `RemoteAgent项目原型书.md` | 早期产品设计：目标、能力模型、演进阶段（历史文档） |
 | `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
-| `docs/adapter-extension-notes.md` | 接 Codex / OpenCode 之前必读：三个会让人挂死的冲突 |
+| `docs/adapter-extension-notes.md` | 接新 Agent 之前必读：各家协议差异与实测结论 |
 
 ## 许可
 

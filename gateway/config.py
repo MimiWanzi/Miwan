@@ -83,6 +83,7 @@ _KNOWN_KEYS: dict[str, set[str]] = {
     "auth": {"token"},
     "opencode": {"command"},
     "workbuddy": {"command"},
+    "codex": {"command"},
     "notify": {"enabled", "channel", "key", "webhook_url"},
 }
 
@@ -108,6 +109,10 @@ class Config:
     #: PATH 上的 codebuddy / cbc，或 WorkBuddy 安装目录里内置的那份
     #: （注册表卸载项反查，需要机器上有 Node）。
     workbuddy_command: tuple[str, ...] = ()
+    #: Codex CLI 的启动命令（argv 前缀）。留空 = 自动找：PATH 上的 codex，
+    #: 或 Codex 桌面应用内置的那份（%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\，
+    #: hash 目录随版本变，取 mtime 最新）。
+    codex_command: tuple[str, ...] = ()
     #: 微信推送的初始值（运行时在设置页里改的存 ``data/notify.json``，优先于这里）。
     #: channel 取 gateway.notify.CHANNELS 之一；key 是 Server酱 SendKey / PushPlus
     #: token；webhook_url 是企业微信群机器人的完整地址。
@@ -299,6 +304,7 @@ def load_config(path: str | Path | None = None) -> Config:
     auth = section("auth")
     opencode = section("opencode")
     workbuddy = section("workbuddy")
+    codex = section("codex")
     notify = section("notify")
 
     host = str(server.get("host", "0.0.0.0"))
@@ -333,6 +339,7 @@ def load_config(path: str | Path | None = None) -> Config:
 
     opencode_command = _parse_command("opencode", opencode.get("command", []))
     workbuddy_command = _parse_command("workbuddy", workbuddy.get("command", []))
+    codex_command = _parse_command("codex", codex.get("command", []))
 
     notify_channel = str(notify.get("channel", "serverchan")).strip() or "serverchan"
 
@@ -356,6 +363,7 @@ def load_config(path: str | Path | None = None) -> Config:
         public_url=public_url,
         opencode_command=opencode_command,
         workbuddy_command=workbuddy_command,
+        codex_command=codex_command,
         notify_enabled=bool(notify.get("enabled", False)),
         notify_channel=notify_channel,
         notify_key=str(notify.get("key", "") or ""),
