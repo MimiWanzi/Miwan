@@ -117,15 +117,19 @@ async def shutdown_adapters() -> None:
 from .claude_code import ClaudeCodeAdapter  # noqa: E402
 from .codex import CodexAdapter  # noqa: E402
 from .opencode import OpenCodeAdapter  # noqa: E402
+from .qoder import QoderAdapter  # noqa: E402
 from .workbuddy import WorkBuddyAdapter  # noqa: E402
 
 register(ClaudeCodeAdapter)
 register(CodexAdapter)
 register(OpenCodeAdapter)
+register(QoderAdapter)
 register(WorkBuddyAdapter)
 
 #: 尚未实现，列在这里是为了让"扩展路径"可见而不是只存在于文档里。
-PENDING_AGENTS = ("cursor",)
+#: trae 考古结论（2026-10-09）：agent 与 IDE 不可分离（扩展宿主 + 云端
+#: JWT 通道 + 内部 toolhost），无独立 CLI 可接，见项目记忆。
+PENDING_AGENTS = ("cursor", "trae")
 
 if sys.version_info < (3, 12):  # pragma: no cover
     # 用到了 asyncio.timeout（3.11+）与 3.12 的若干写法，早点报错比运行到一半崩好
