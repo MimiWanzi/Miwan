@@ -97,10 +97,11 @@ const TERMINAL = new Set(["completed", "failed", "cancelled", "disconnected"]);
 
 // Agent 的展示名：权威在 /api/agents 的 name（跟着 adapter 走），这里缓存一份
 // 给项目页/任务页用。内置映射是第一屏的兜底——detect 要起子进程，比首屏慢。
-const agentLabels = { claude_code: "Claude Code", opencode: "OpenCode" };
+const agentLabels = { claude_code: "Claude Code", codex: "Codex", opencode: "OpenCode", workbuddy: "WorkBuddy" };
 function primeAgentLabels(payload) {
   for (const a of (payload && payload.agents) || []) {
-    if (a.agent_id && a.name) agentLabels[a.agent_id] = a.name;
+    // /api/agents 的字段是 AgentInfo.id（不是 agent_id），曾写错导致 priming 永远落空
+    if (a.id && a.name) agentLabels[a.id] = a.name;
   }
 }
 const agentLabel = (id) => agentLabels[id] || id || "";

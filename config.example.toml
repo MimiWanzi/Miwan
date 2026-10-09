@@ -59,6 +59,14 @@ command = []
 # command = ["node", "D:/path/to/WorkBuddy/resources/app.asar.unpacked/cli/bin/codebuddy"]
 command = []
 
+[codex]
+# Codex CLI 的启动命令（argv 前缀）。留空 = 自动找：
+# PATH 上的 codex，或 Codex 桌面应用内置的那份
+# （%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe，hash 目录随版本变）。
+# 模型后端由 ~/.codex/config.toml 决定，网关不碰它。
+# command = ["C:/path/to/codex.exe"]
+command = []
+
 [notify]
 # 微信推送：任务完成 / 失败 / 等审批 / 撞绊线时发一条通知。
 # 这里只是初始值；在网页「设置」页里改的会存到 data/notify.json，优先于本节。
