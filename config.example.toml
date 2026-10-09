@@ -8,10 +8,6 @@
 # （注意：放仓库根的 config.toml 不会被读到，配置文件只在应用目录或
 # REMOTE_AGENT_CONFIG 指定的路径找；启动横幅的「配置」一行会打印实际
 # 生效的路径，拿不准就看它）。
-# 优先级：命令行 --host/--port > 环境变量 REMOTE_AGENT_* > config.toml > 内置默认。
-# 写了不认识的节或键，启动时会点名警告——"配置不生效"先看那里
-# （注意：放仓库根的 config.toml 不会被读到，配置文件只在应用目录或
-# REMOTE_AGENT_CONFIG 指定的路径找）。
 #
 # config.toml 里可能有 token，绝不要提交进仓库。
 
@@ -65,6 +61,13 @@ command = []
 # （%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe，hash 目录随版本变）。
 # 模型后端由 ~/.codex/config.toml 决定，网关不碰它。
 # command = ["C:/path/to/codex.exe"]
+command = []
+
+[qoder]
+# Qoder CLI 的启动命令（argv 前缀）。留空 = 从 PATH 上找 qodercn /
+# qoderclicn（npm i -g @qodercn-ai/qoderclicn）。
+# 注意 CLI 与 Qoder 桌面端登录态不互通：装好后要跑一次 qodercn login。
+# command = ["C:/path/to/qodercn.cmd"]
 command = []
 
 [notify]

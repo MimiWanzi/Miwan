@@ -97,7 +97,7 @@ const TERMINAL = new Set(["completed", "failed", "cancelled", "disconnected"]);
 
 // Agent 的展示名：权威在 /api/agents 的 name（跟着 adapter 走），这里缓存一份
 // 给项目页/任务页用。内置映射是第一屏的兜底——detect 要起子进程，比首屏慢。
-const agentLabels = { claude_code: "Claude Code", codex: "Codex", opencode: "OpenCode", workbuddy: "WorkBuddy" };
+const agentLabels = { claude_code: "Claude Code", codex: "Codex", opencode: "OpenCode", qoder: "Qoder", workbuddy: "WorkBuddy" };
 function primeAgentLabels(payload) {
   for (const a of (payload && payload.agents) || []) {
     // /api/agents 的字段是 AgentInfo.id（不是 agent_id），曾写错导致 priming 永远落空
@@ -1232,7 +1232,7 @@ function buildOnboardingCard(agentsPayload, me) {
   const agents = agentsPayload.agents || [];
   const ready = agents.filter((a) => a.status === "ready");
   const missing = agents.filter((a) => a.status !== "ready");
-  const names = ready.map((a) => a.name).join("、") || "还没检测到可用的 Agent——先确认 claude / opencode / workbuddy 能在电脑上跑";
+  const names = ready.map((a) => a.name).join("、") || "还没检测到可用的 Agent——先确认 claude / qoder / opencode / workbuddy 能在电脑上跑";
 
   const pairBtn = el("button", { class: "primary", text: "手机扫码配对" });
   const pairBox = el("div");
@@ -1287,7 +1287,7 @@ async function viewProjects() {
   primeAgentLabels(agentsPayload);
   if (!ready.length) {
     nodes.push(el("div", { class: "banner", text:
-      "没有检测到可用的 Agent。任务可以提交，但会立刻失败——先确认 claude / opencode / workbuddy 命令能用。" }));
+      "没有检测到可用的 Agent。任务可以提交，但会立刻失败——先确认 claude / qoder / opencode / workbuddy 命令能用。" }));
   }
 
   const refreshBtn = el("button", { class: "ghost", text: "重新扫描" });

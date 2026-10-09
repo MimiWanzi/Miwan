@@ -415,10 +415,33 @@ class TaskRunner:
         任务状态走 WAITING_APPROVAL → RUNNING 一来一回，事件流里则是一对
         PERMISSION_REQUEST / PERMISSION_DECIDED——前端按 permission_id
         把「等你批准」的卡片换成结果。
+
+        绊线在这里先拦一道：Claude 的绊线由 CLI 侧 ``--disallowedTools``
+        硬拒（走不到门），但 Qoder 一类 CLI 没有规则形状的拒绝表达、
+        只有整工具增删——门是它们唯一的规则拦截点。规则内容来自
+        :class:`Policy`，与具体 Agent 无关；对 Claude 是冗余但无害的重复防线。
         """
         task = self.store.get_task(task_id)
         if task is None or task.status in TERMINAL_STATUSES:
             return {"behavior": "deny", "message": "任务已结束，操作被拒绝"}
+
+        verdict = self.policy.decide(str(tool_name), tool_input)
+        if verdict.tripwire is not None:
+            self._sink(task_id)(
+                Event(
+                    task_id=task_id,
+                    type=EventType.PERMISSION_REQUEST,
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_input": tool_input,
+                        "decision": "deny",
+                        "source": "tripwire",
+                        "reason": verdict.reason,
+                        "tripwire": verdict.tripwire.as_dict(),
+                    },
+                )
+            )
+            return {"behavior": "deny", "message": verdict.reason}
 
         capped = _cap_json(tool_input)
         perm_id = self.store.create_permission(
