@@ -748,6 +748,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows 控制台常见 GBK 编码打不出 ●/✗ 这类状态标记（v5 起 missing
+    # 状态真会出现，serve 横幅和 agents 都会打到它），UnicodeEncodeError
+    # 会让整个命令/双击启动直接崩——退化成 ? 即可，中文不受影响。
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):  # 非 TextIO / 已被重定向的极端情况
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
