@@ -6,10 +6,9 @@
 这类 Agent 包成一个可远程操作的服务——发现项目、下达任务、实时看它每一步在做什么、
 随时中断。手机端只需要一个浏览器，不需要装 App。
 
-> **当前状态：MVP-0，第 0–8 层已完成。**
-> 端到端链路可用，且有自动化验收兜着（见[测试与验收](#测试与验收)）。
-> 已接入 Claude Code / OpenCode / WorkBuddy / Codex 四个 Agent；传输是明文 HTTP ——
-> 这是明确决定推迟的，不是漏掉的，见[已知限制](#已知限制)。
+> **当前状态：已接入五个 Agent（Claude Code / OpenCode / WorkBuddy / Codex / Qoder），
+> 端到端链路可用，且有自动化验收兜着（见[测试与验收](#测试与验收)）。**
+> 传输是明文 HTTP —— 这是明确决定推迟的，不是漏掉的，见[已知限制](#已知限制)。
 
 ---
 
@@ -32,7 +31,7 @@
 |---|---|
 | 配对 | 输入 6 位配对码换一份**本设备专属**凭证，不用把主机 token 抄到手机上 |
 | 监控台 | `#/overview` 一屏看所有任务的运行状态（活跃任务可一键中断），主机凭证还能顺手管理设备；每 5 秒自动刷新 |
-| 手机扫码连接 | 监控台右侧显示公网地址的二维码，手机扫码即进、网址不用手输；设备页还能出**含配对码**的配对二维码（网关本机发起时），扫完只剩起名+确认（`config.toml` 配 `[server] public_url`，服务端 `pip install qrcode`） |
+| 手机扫码连接 | 监控台右侧显示公网地址的二维码，手机扫码即进、网址不用手输；设备页还能出**含配对码**的配对二维码（网关本机发起时），扫完只剩起名+确认（`config.toml` 配 `[server] public_url`；二维码用的 qrcode 已在 requirements.txt） |
 | 项目列表 | 列出电脑上被 Agent 用过的项目，含 git 分支与最近活动时间 |
 | 新建项目 | 首页手动登记一个绝对路径当项目（目录不存在可顺手创建）——扫描只找得到被 Agent 用过的目录，新开项目全靠它 |
 | 项目页 | 历史会话列表 + 新建任务表单（接了多个 Agent 时可挑选由谁执行） |
@@ -81,6 +80,9 @@ Local Gateway  (Python 3.12 / aiohttp)
                  │
                  ▼  HTTP
             opencode serve    (一个网关一个 serve，按目录切项目)
+          workbuddy/    WorkBuddy 实现（驱动桌面版内置 CodeBuddy CLI，Anthropic 同族协议）
+          codex/        Codex 实现（exec 每回合一个进程 / 沙箱三档映射 / rollout 发现）
+          qoder/        Qoder 实现（Anthropic 同族协议复用 Mapper / 云端会话 / credits 计费）
 ```
 
 **分层原则**：`runner` / `permissions` / `adapters` 只依赖 `EventBus` 和 `Store`，
@@ -103,7 +105,10 @@ Local Gateway  (Python 3.12 / aiohttp)
 
 ## 快速开始
 
-**环境要求**：Python 3.12+，本机装有 Claude Code CLI（`claude` 在 PATH 上）。
+**环境要求**：Windows 10/11（本项目的主场——进程树终止、注册表反查、应用目录
+位置都绑着它），Python 3.12+。Agent 不求全：本机有哪家 CLI 就能接入哪家
+（Claude Code / OpenCode / WorkBuddy / Codex / Qoder），`python -m gateway agents`
+会逐个给出检测结果与安装指引。
 
 OpenCode 不是必须的。要接入时：PATH 上有 `opencode` 就自动识别；从源码跑的
 （本机就是这样）在 `config.toml` 里配一条启动命令：
@@ -231,17 +236,16 @@ node   probes/verify_liveness.mjs      # 前端探活逻辑（确定性、免费
 **还债时点是明确的**：只要还想做 PWA，就必须上 HTTPS——service worker 只在
 secure context 里可用。所以做 PWA 之前这件事必须还，不能一直拖。
 
-### 2. 权限通道只能"拦"，不能"问"
+### 2. "问"是逐 Adapter 的能力事实，不是统一保证
 
-今天的行为是**绊线命中 → 当场拒绝 + 回合结束时通知手机**。
+MCP 审批通道**已建成并实测**（真 CLI：批准→真的执行、拒绝→真的不执行）：
+Claude Code（`--permission-prompt-tool`）与 Qoder（越界确认路由）能在任务中途
+挂起，等你在手机上点允许/拒绝。
 
-"先挂起、等人在手机上点允许"这个中间态**做不到**：声明式通道（`--disallowedTools`）
-拦下来就是当场拒，CLI 没有"等人回答"这个状态。要做到"问"，得让 `--permission-prompt-tool`
-指向一个 MCP server 由网关接管回答——CLI 收这个参数，但 `--help` 里没有，属于未验证依赖，
-按和排除 `--bg` 系列同样的理由没上。
-
-**代价很具体**：拒绝记录在 `result.permission_denials` 里，只有回合结束才拿得到。
-一个跑 10 分钟的任务，你在第 10 分钟才知道它撞了绊线。
+但这不是平台对全体的承诺——各 CLI 有没有运行时审批拦截点是厂商事实：
+OpenCode / WorkBuddy / Codex 仍是 deny-only（`permission_gate=False`，前端按
+能力声明如实展示）。绊线的"拦"半边在审批门处统一生效（Claude/Qoder）；
+Codex 的 FULL 档例外——exec 模式没有拦截点，绊线注入不了（已声明的局限）。
 
 ### 3. 绊线是正则文本匹配，不是沙箱
 
@@ -264,6 +268,14 @@ Base64 解码后 `iex`、`-join` 拼参数，任何正则清单都拦不住。
 
 **限流是前提不是优化**：6 位码只有 20 bit 熵，配上无限次尝试是纸糊的；
 配上 5 次尝试，猜中概率是 10⁻⁶ 量级。将来若有人"优化"掉限流，配对的强度会一起塌掉。
+
+### 6. 主机 token 可以走 URL 查询串
+
+为了"从聊天软件里点开链接直接进"这个手机场景，token 的查找顺序是
+查询串 → 请求头 → cookie。带 token 的 URL 会留在浏览器历史里（网关日志在本机）。
+局域网内可接受；**别用端口转发把 8765 直接暴露到公网**——传输安全的还债时点
+在 Phase 5（HTTPS/WSS），在那之前远程访问走 Cloudflare 隧道（公网侧 TLS 在
+边缘终结）或干脆留在局域网。
 
 ### 6. OpenCode 的会话正文读不了，非 git 目录扫不到
 
