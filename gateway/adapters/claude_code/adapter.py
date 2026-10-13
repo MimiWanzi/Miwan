@@ -20,8 +20,9 @@ from ..base import (
     EmitFn,
     ScanResult,
 )
+from ..diagnose import DiagRow
 from . import discovery
-from .locate import clean_env, find_exe, projects_dir
+from .locate import clean_env, diagnose, find_exe, projects_dir
 from ...permissions import Policy
 from .session import ClaudeSession
 
@@ -96,6 +97,11 @@ class ClaudeCodeAdapter(AgentAdapter):
             detail=failure,
             capabilities=CAPABILITIES,
         )
+
+    @classmethod
+    def diagnose_rows(cls) -> list[DiagRow]:
+        """doctor 用：查找过程的可打印诊断（可选钩子，doctor 靠 getattr 探测）。"""
+        return diagnose()
 
     async def discover_projects(self, blocked: Sequence[Path] = ()) -> ScanResult:
         """扫本地 JSONL。

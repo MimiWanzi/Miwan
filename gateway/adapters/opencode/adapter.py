@@ -28,6 +28,7 @@ from ..base import (
     ScanResult,
 )
 from ..history import TEXT_LIMIT, tool_detail
+from ..diagnose import DiagRow
 from . import discovery, serve
 from .session import OpenCodeSession
 
@@ -103,6 +104,11 @@ class OpenCodeAdapter(AgentAdapter):
             detail=failure,
             capabilities=CAPABILITIES,
         )
+
+    @classmethod
+    def diagnose_rows(cls) -> list[DiagRow]:
+        """doctor 用：查找过程的可打印诊断（可选钩子，doctor 靠 getattr 探测）。"""
+        return discovery.diagnose()
 
     async def discover_projects(self, blocked: Sequence[Path] = ()) -> ScanResult:
         """问 serve 要项目与会话列表。

@@ -22,6 +22,7 @@ from ..base import (
     ScanResult,
 )
 from ...permissions import Policy
+from ..diagnose import DiagRow
 from . import discovery, locate
 from .session import CodexSession
 
@@ -78,6 +79,11 @@ class CodexAdapter(AgentAdapter):
             detail=failure,
             capabilities=CAPABILITIES,
         )
+
+    @classmethod
+    def diagnose_rows(cls) -> list[DiagRow]:
+        """doctor 用：查找过程的可打印诊断（可选钩子，doctor 靠 getattr 探测）。"""
+        return locate.diagnose()
 
     async def discover_projects(self, blocked: Sequence[Path] = ()) -> ScanResult:
         """扫 rollout 文件（同步文件 IO，直接在协程里跑，理由同 Claude）。"""

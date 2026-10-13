@@ -23,6 +23,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..diagnose import DiagRow, config_row, path_rows
+
 #: 允许用环境变量覆盖会话存储位置（探针用假 rollout 文件喂 discovery）。
 SESSIONS_DIR_ENV = "REMOTE_AGENT_CODEX_SESSIONS_DIR"
 
@@ -46,6 +48,37 @@ def find_command() -> tuple[str, ...] | None:
     if bundled is not None:
         return (str(bundled),)
     return None
+
+
+def diagnose() -> list[DiagRow]:
+    """doctor 用：codex 的查找过程可打印化。
+
+    除 PATH 外还有一个已知位置（Desktop 内置二进制），find_command 找不到
+    时用户需要知道"这一层也查过了"——把检查结果如实报出来。
+    """
+    from ...config import loaded_config  # 同 find_command 的理由：避免导入环
+
+    config = loaded_config()
+    current = config.codex_command if config is not None else None
+    bundled = _bundled_binary()
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        bundled_value = "（没有 LOCALAPPDATA，扫不了）"
+    else:
+        root = Path(local) / "OpenAI" / "Codex" / "bin"
+        bundled_value = f"{root}\\<hash>\\codex.exe → " + (
+            f"找到 {bundled}" if bundled is not None else "目录不存在或为空"
+        )
+    return [
+        *path_rows(("codex",)),
+        DiagRow("已知位置：Desktop 内置", bundled_value),
+        config_row(
+            section="codex",
+            current=current,
+            hint="装 Codex CLI（npm i -g @openai/codex）或 Desktop 应用后重启网关；"
+                 "也可以在 config.toml 里写 [codex] command = [\"…codex.exe\"] 钉死路径。",
+        ),
+    ]
 
 
 def _which_cli(name: str) -> str | None:

@@ -1,6 +1,7 @@
 """Gateway 命令行入口。
 
     python -m gateway agents      列出已注册的 Agent 接入及其在本机的可用状态
+    python -m gateway doctor      环境诊断：Agent 为什么扫不到，一张可发给别人看的清单
     python -m gateway projects    扫描各 Agent 的项目存储，落库，再从库里读回来
     python -m gateway run         跑一个真实任务（走完整状态机，事件落库）
     python -m gateway serve       启动 HTTP / WebSocket 网关（手机从这里进来）
@@ -40,6 +41,7 @@ from .adapters import DEFAULT_AUTONOMY, PENDING_AGENTS, AutonomyPolicy, detect_a
 from .adapters.base import AgentInfo
 from .auth import CODE_TTL, AuthService
 from .config import load_config
+from .doctor import run as run_doctor
 from .events import Event, EventBus, EventType
 from .models import Project, Session, Task, TaskStatus
 from .runner import RunnerError, TaskRunner
@@ -173,6 +175,15 @@ def cmd_agents(args: argparse.Namespace) -> int:
         print("接入方式：新增 adapters/<agent>/ 子包实现 AgentAdapter，")
         print("          在 gateway/adapters/__init__.py 里 register()。核心层不用改。")
     return 0
+
+
+# ----------------------------------------------------------------------
+# doctor
+# ----------------------------------------------------------------------
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    return run_doctor()
 
 
 # ----------------------------------------------------------------------
@@ -677,6 +688,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_agents = sub.add_parser("agents", help="列出已注册的 Agent 接入与检测状态")
     p_agents.set_defaults(func=cmd_agents)
+
+    p_doctor = sub.add_parser(
+        "doctor", help="环境诊断：Agent 为什么扫不到，一张可发给别人看的清单"
+    )
+    p_doctor.set_defaults(func=cmd_doctor)
 
     p_projects = sub.add_parser("projects", help="发现项目与会话")
     p_projects.add_argument(
