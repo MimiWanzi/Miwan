@@ -11,16 +11,43 @@ import os
 import shutil
 from pathlib import Path
 
+from ..diagnose import DiagRow, config_row, path_rows
+from ..known_locations import (
+    KnownDir,
+    js_global_dirs,
+    locations_row,
+    registry_path_dirs,
+    registry_path_row,
+    resolve_in_dir,
+)
+
 #: 允许用环境变量覆盖，便于换机器或不走默认安装路径。
 EXE_ENV = "REMOTE_AGENT_CLAUDE_EXE"
 PROJECTS_DIR_ENV = "REMOTE_AGENT_CLAUDE_PROJECTS_DIR"
 
 
+def known_dirs() -> list[KnownDir]:
+    """PATH 之外的官方安装落点，按实证程度排序。
+
+    - ``~/.local/bin``：原生安装器的落点（安装器会写 PATH，但双击 exe 的
+      会话可能持着旧值——位置兜底让这层差异不再致命）
+    - ``~/.claude/local``：旧版 migrate-installer 的落点，存量机器还有
+    - npm 系全局目录（见 :mod:`adapters.known_locations`）
+    """
+    home = Path.home()
+    return [
+        KnownDir("原生安装器", home / ".local" / "bin"),
+        KnownDir("旧版迁移安装", home / ".claude" / "local"),
+        *js_global_dirs(),
+    ]
+
+
 def find_exe() -> Path | None:
     """找 claude CLI。找不到返回 None——没装是正常情况，不是错误。
 
-    只认 ``shutil.which``：CLI 的安装位置随安装方式变（npm 全局、原生
-    安装器各不相同），写死候选路径只会留下 silently 失效的死配置。
+    先 ``shutil.which``；PATH 没有（双击 exe 拿到的 PATH 可能是 Explorer
+    会话的旧值）再逐个试官方安装落点。安装位置随安装方式变，所以兜底
+    只收有实证的位置，不写死大概率失效的候选路径。
     which 找到的若是 shim（.cmd/.ps1），上面 REMOTE_AGENT_CLAUDE_EXE
     可以指到真正的原生可执行文件——双工管道不希望中间多一层 shell。
     """
@@ -30,7 +57,42 @@ def find_exe() -> Path | None:
         return candidate if candidate.exists() else None
 
     found = shutil.which("claude")
-    return Path(found) if found else None
+    if found:
+        return Path(found)
+    # 进程 PATH 没有：先查注册表 PATH 的差集（安装器写了但本进程没拿到的，
+    # 与安装方式无关），再查官方落点（根本不进 PATH 的结构性场景）
+    for entry in [*registry_path_dirs(), *known_dirs()]:
+        hit = resolve_in_dir(entry.path, "claude")
+        if hit is not None:
+            return hit
+    return None
+
+
+def diagnose() -> list[DiagRow]:
+    """doctor 用：claude 的查找过程可打印化。
+
+    查找逻辑只有 PATH 一处（find_exe 刻意如此，理由见它的 docstring），
+    所以诊断就是两件事：证明"这个进程的 PATH 里确实没有 claude"，
+    以及指出仅有的两条出路——环境变量覆盖和装 CLI 本身。
+    """
+    override = os.environ.get(EXE_ENV)
+    override_value = (
+        f"已设置：{override}（{'文件存在' if Path(override).exists() else '文件不存在，会被当作没找到'}）"
+        if override
+        else "未设置"
+    )
+    return [
+        *path_rows(("claude",)),
+        registry_path_row("claude"),
+        locations_row(known_dirs(), "claude"),
+        DiagRow(f"环境变量 {EXE_ENV}", override_value),
+        config_row(
+            section="claude_code",
+            current=None,
+            hint="claude 不走 config.toml 命令覆盖；安装 CLI（npm i -g @anthropic-ai/claude-code "
+                 "或原生安装器）并确保它进 PATH 后重启网关即可。",
+        ),
+    ]
 
 
 def projects_dir() -> Path:

@@ -20,6 +20,15 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..diagnose import DiagRow, config_row, path_rows
+from ..known_locations import (
+    js_global_dirs,
+    locations_row,
+    registry_path_dirs,
+    registry_path_row,
+    resolve_in_dir,
+)
+
 VERSION_TIMEOUT = 60.0
 """node 冷启动比 rust 慢，首次运行还可能做资源自检，超时给宽。"""
 
@@ -46,7 +55,38 @@ def find_command() -> tuple[str, ...] | None:
         found = _which_cli(name)
         if found:
             return _resolve((found,))
+
+    # 进程 PATH 没有：先查注册表 PATH 的差集（与安装方式无关），再查 npm/bun
+    # 全局目录（Qoder CLI 只有 npm 一种安装形态，无"官方安装器落点"级位置）
+    for entry in [*registry_path_dirs(), *js_global_dirs()]:
+        for name in ("qodercn", "qoderclicn"):
+            hit = resolve_in_dir(entry.path, name)
+            if hit is not None:
+                return _resolve((str(hit),))
     return None
+
+
+def diagnose() -> list[DiagRow]:
+    """doctor 用：qoder 的查找过程可打印化。
+
+    PATH 之外只有 npm/bun 全局目录一个兜底维度（CLI 只有 npm 一种安装
+    形态，见模块 docstring）——重点是说清"装的是桌面版 ≠ 装了 CLI"。
+    """
+    from ...config import loaded_config  # 同 find_command 的理由：避免导入环
+
+    config = loaded_config()
+    current = config.qoder_command if config is not None else None
+    return [
+        *path_rows(("qodercn", "qoderclicn")),
+        registry_path_row("qodercn", "qoderclicn"),
+        locations_row(js_global_dirs(), "qodercn", "qoderclicn"),
+        config_row(
+            section="qoder",
+            current=current,
+            hint="npm i -g @qodercn-ai/qoderclicn 装的是 CLI，与 Qoder 桌面版凭证不互通；"
+                 "装完重启网关。装了桌面版 ≠ 装了 CLI。",
+        ),
+    ]
 
 
 def _which_cli(name: str) -> str | None:

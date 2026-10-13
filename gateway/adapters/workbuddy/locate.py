@@ -24,6 +24,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..diagnose import DiagRow, config_row, path_rows
+
 #: 允许用环境变量覆盖会话存储位置（CLI 自己认 CODEBUDDY_CONFIG_DIR 时用）。
 PROJECTS_DIR_ENV = "REMOTE_AGENT_WORKBUDDY_PROJECTS_DIR"
 
@@ -49,6 +51,47 @@ def find_command() -> tuple[str, ...] | None:
         if command is not None:
             return command
     return None
+
+
+def diagnose() -> list[DiagRow]:
+    """doctor 用：workbuddy 的查找过程可打印化。
+
+    这家的查找层级最多（PATH → 注册表 → NSIS 默认目录 → 还要求 node），
+    逐层报告检查结果，哪层断了用户一眼能看到。
+    """
+    from ...config import loaded_config  # 同 find_command 的理由：避免导入环
+
+    config = loaded_config()
+    current = config.workbuddy_command if config is not None else None
+    rows = [
+        *path_rows(("codebuddy", "cbc")),
+    ]
+
+    launchers = _bundled_launchers()
+    if launchers:
+        lines = []
+        for launcher in launchers:
+            state = "找到" if launcher.is_file() else "不存在"
+            lines.append(f"  {launcher}\n    → {state}")
+        rows.append(DiagRow("已知位置：WorkBuddy 内置 CLI", "\n".join(lines)))
+    else:
+        rows.append(DiagRow(
+            "已知位置：WorkBuddy 内置 CLI",
+            "注册表卸载项和默认目录里都没有 WorkBuddy 安装记录",
+        ))
+
+    node = shutil.which("node")
+    rows.append(DiagRow(
+        "Node 运行时",
+        f"找到 {node}" if node else "PATH 上没有 node——内置 CLI 是 node 启动脚本，没有它前两层找到了也用不了",
+    ))
+    rows.append(config_row(
+        section="workbuddy",
+        current=current,
+        hint='装 WorkBuddy 桌面应用（自带 CLI，需另装 Node ≥ 18.20.8）或 npm i -g @tencent-ai/codebuddy-code 后重启网关；'
+             '也可以在 config.toml 里写 [workbuddy] command = ["node", "…/cli/bin/codebuddy"]。',
+    ))
+    return rows
 
 
 def _which_cli(name: str) -> str | None:

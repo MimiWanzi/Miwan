@@ -23,6 +23,7 @@ from ..base import (
     ScanResult,
 )
 from ...permissions import Policy
+from ..diagnose import DiagRow
 from . import locate
 from .session import QoderSession
 
@@ -103,6 +104,11 @@ class QoderAdapter(AgentAdapter):
             executable=command[0],
             capabilities=CAPABILITIES,
         )
+
+    @classmethod
+    def diagnose_rows(cls) -> list[DiagRow]:
+        """doctor 用：查找过程的可打印诊断（可选钩子，doctor 靠 getattr 探测）。"""
+        return locate.diagnose()
 
     async def discover_projects(self, blocked: Sequence[Path] = ()) -> ScanResult:
         """会话正文在云端，本地无可扫的目录——如实返回空（见 CAPABILITIES）。"""

@@ -16,8 +16,31 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..diagnose import DiagRow, config_row, path_rows
+from ..known_locations import (
+    KnownDir,
+    js_global_dirs,
+    locations_row,
+    registry_path_dirs,
+    registry_path_row,
+    resolve_in_dir,
+)
+
 VERSION_TIMEOUT = 30.0
 """bun 冷启动比普通二进制慢（实测数秒），超时给得比 claude 宽。"""
+
+
+def known_dirs() -> list[KnownDir]:
+    """PATH 之外的官方安装落点。
+
+    ``~/.opencode/bin``：官方 curl/安装脚本的落点（源码
+    ``installation/index.ts`` 以 ``.opencode/bin`` 识别自家安装）；
+    其余为 npm/bun 全局目录。
+    """
+    return [
+        KnownDir("官方安装脚本", Path.home() / ".opencode" / "bin"),
+        *js_global_dirs(),
+    ]
 
 
 def find_command() -> tuple[str, ...] | None:
@@ -29,9 +52,35 @@ def find_command() -> tuple[str, ...] | None:
         return _resolve(config.opencode_command)
 
     exe = shutil.which("opencode")
-    if exe is None:
-        return None
-    return _resolve((exe,))
+    if exe is not None:
+        return _resolve((exe,))
+
+    # 进程 PATH 没有：先查注册表 PATH 的差集（与安装方式无关），再查官方落点
+    for entry in [*registry_path_dirs(), *known_dirs()]:
+        hit = resolve_in_dir(entry.path, "opencode")
+        if hit is not None:
+            return _resolve((str(hit),))
+    return None
+
+
+def diagnose() -> list[DiagRow]:
+    """doctor 用：opencode 的查找过程可打印化。"""
+    from ...config import loaded_config  # 同 find_command 的理由：避免导入环
+
+    config = loaded_config()
+    current = config.opencode_command if config is not None else None
+    return [
+        *path_rows(("opencode",)),
+        registry_path_row("opencode"),
+        locations_row(known_dirs(), "opencode"),
+        config_row(
+            section="opencode",
+            current=current,
+            hint='没有正式安装时用 config.toml 指到源码入口：\n'
+                 '  [opencode]\n'
+                 '  command = ["bun", "run", "--cwd", "D:/…/packages/opencode", "src/index.ts"]',
+        ),
+    ]
 
 
 def _resolve(command: tuple[str, ...]) -> tuple[str, ...]:

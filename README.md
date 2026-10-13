@@ -124,6 +124,11 @@ pip install -r requirements.txt
 # 1. 看看本机有哪些 Agent 可用
 python -m gateway agents
 
+# 1b. 有 Agent 明明装了却扫不到？跑环境诊断：
+#     打印 doctor 进程实际拿到的 PATH、逐 Agent 的搜索过程与覆盖方法，
+#     整段复制发给别人就能求助
+python -m gateway doctor
+
 # 2. 扫描项目与会话，落库
 python -m gateway projects
 
