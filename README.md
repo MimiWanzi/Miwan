@@ -386,4 +386,4 @@ RemoteAgent/
 
 ## 许可
 
-暂未指定。
+MIT。见 [LICENSE](LICENSE)。
