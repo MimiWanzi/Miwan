@@ -349,7 +349,7 @@ async def qr_svg(request: web.Request) -> web.Response:
     text = (request.query.get("text") or "").strip() or ctx.config.public_url
     if not text:
         return json_error(
-            "还没配置公网地址：config.toml 写 [server] public_url，或设环境变量 KEEPER_PUBLIC_URL", 404
+            "还没配置公网地址：config.toml 写 [server] public_url，或设环境变量 MIWAN_PUBLIC_URL", 404
         )
     if len(text) > 512:
         return json_error("text 太长，上限 512 字符", 400)

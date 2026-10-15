@@ -159,8 +159,8 @@ async def main() -> int:
 
 async def _run(tmp: Path) -> bool:
     """返回 True = SKIP（环境不满足），False = 完整跑完。"""
-    # KEEPER_CODEX_SESSIONS_DIR 是零额度探针的夹具口，E2E 必须读真目录
-    assert "KEEPER_CODEX_SESSIONS_DIR" not in os.environ, \
+    # MIWAN_CODEX_SESSIONS_DIR 是零额度探针的夹具口，E2E 必须读真目录
+    assert "MIWAN_CODEX_SESSIONS_DIR" not in os.environ, \
         "E2E 必须读真实的 ~/.codex/sessions，请先清掉该环境变量"
     config = replace(load_config(), data_dir=tmp / "data", token=TOKEN)
     app = build_app(config)

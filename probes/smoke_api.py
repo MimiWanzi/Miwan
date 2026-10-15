@@ -198,7 +198,7 @@ async def check_real_frontend(checks: Checks, session, base: str) -> None:
     这里用真文件而不是手造的假文件：手造的假的能验证挂载顺序，
     验证不了"app.js 真的在、真的能取到"——而后者才是第 5 层会踩的坑。
     """
-    await expect(checks, "GET / 给 index.html", lambda: session.get(f"{base}/"), 200, "Keeper")
+    await expect(checks, "GET / 给 index.html", lambda: session.get(f"{base}/"), 200, "Miwan")
     await expect(checks, "app.js", lambda: session.get(f"{base}/app.js"), 200, "openStream")
     await expect(checks, "style.css", lambda: session.get(f"{base}/style.css"), 200, "--bg")
     await expect(checks, "/api/health 不被抢走", lambda: session.get(f"{base}/api/health"), 200, '"ok"')

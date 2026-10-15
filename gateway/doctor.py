@@ -48,7 +48,7 @@ def _print_header() -> None:
         program = f"{Path(sys.executable).name}（exe 打包运行）"
     else:
         program = sys.executable
-    print("Keeper Gateway · 环境诊断")
+    print("Miwan Gateway · 环境诊断")
     print(f"{_INDENT}程序      {program}")
     print(f"{_INDENT}Python    {platform.python_version()}  "
           f"（{platform.machine()}）")

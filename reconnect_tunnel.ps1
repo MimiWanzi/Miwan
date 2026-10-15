@@ -2,9 +2,9 @@
 # 断线的症状：手机打开公网地址报 Error 1016 / 530。双击「重连隧道.cmd」跑一次即可。
 # 免费临时隧道的网址每次重启都会变，所以"重连"就是上面三件事一次做完。
 # 缺 cloudflared（公网隧道组件）不用管：脚本自动从 Cloudflare 官方发布页
-# 下载到 %LOCALAPPDATA%\Keeper\bin\，约 40MB，只需一次。
+# 下载到 %LOCALAPPDATA%\Miwan\bin\，约 40MB，只需一次。
 #
-# 网关两种形态都认：同目录/dist 下的 Keeper.exe（exe 双击场景）
+# 网关两种形态都认：同目录/dist 下的 Miwan.exe（exe 双击场景）
 # 优先，没有才用 python -m gateway serve（开发场景）。
 # 杀旧网关按**端口**找 PID——exe 和 python 通吃，按进程名找会漏掉 exe。
 
@@ -15,7 +15,7 @@ $OutLog = Join-Path $Root "data\tunnel.out.log"
 $ErrLog = Join-Path $Root "data\tunnel.err.log"
 
 # exe 的候选位置：脚本旁边、dist\ 里
-$GatewayExe = @((Join-Path $Root "Keeper.exe"), (Join-Path $Root "dist\Keeper.exe")) |
+$GatewayExe = @((Join-Path $Root "Miwan.exe"), (Join-Path $Root "dist\Miwan.exe")) |
     Where-Object { Test-Path $_ } | Select-Object -First 1
 $Python = @("D:\programFiles\miniconda\envs\RemoteAgent\python.exe", "python") |
     Where-Object { $_ -eq "python" -or (Test-Path $_) } | Select-Object -First 1
@@ -23,7 +23,7 @@ $Python = @("D:\programFiles\miniconda\envs\RemoteAgent\python.exe", "python") |
 # 都没有就自动下载——普通用户不该被要求认识 cloudflared，缺什么脚本自己补。
 # 下载源固定为 Cloudflare 官方 releases（HTTPS）；落到应用目录，免管理员权限。
 # 先下到 .tmp 再改名：下载半途而废时不会留一个打不开的半截 exe 骗过下次的 Test-Path。
-$CloudflaredLocal = Join-Path $env:LOCALAPPDATA "Keeper\bin\cloudflared.exe"
+$CloudflaredLocal = Join-Path $env:LOCALAPPDATA "Miwan\bin\cloudflared.exe"
 if (Test-Path $CloudflaredLocal) {
     $Cloudflared = $CloudflaredLocal
 } elseif (Test-Path "C:\Program Files (x86)\cloudflared\cloudflared.exe") {
@@ -58,12 +58,12 @@ if ($GatewayExe) {
     Write-Host "==> 网关形态：python -m gateway"
 }
 
-Write-Host "==> Keeper 隧道重连" -ForegroundColor Cyan
+Write-Host "==> Miwan 隧道重连" -ForegroundColor Cyan
 
 # 重启网关会把正在跑的任务标成中断，有任务在跑时先问一声
 $health = $null
 try { $health = Invoke-RestMethod "http://127.0.0.1:$Port/api/health" -TimeoutSec 3 } catch {}
-if ($health -and $health.running_tasks -gt 0 -and -not $env:KEEPER_NOPAUSE) {
+if ($health -and $health.running_tasks -gt 0 -and -not $env:MIWAN_NOPAUSE) {
     $ans = Read-Host "网关里有 $($health.running_tasks) 个任务在跑，重启会中断它们。继续？(y/n)"
     if ($ans -ne "y") { exit }
 }
@@ -101,8 +101,8 @@ if (-not $url) {
 Write-Host "    新网址：$url"
 
 Write-Host "==> 更新 config.toml"
-# 配置和数据统一放在应用目录（%LOCALAPPDATA%\Keeper），python / exe 读同一份
-$configPath = Join-Path $env:LOCALAPPDATA "Keeper\config.toml"
+# 配置和数据统一放在应用目录（%LOCALAPPDATA%\Miwan），python / exe 读同一份
+$configPath = Join-Path $env:LOCALAPPDATA "Miwan\config.toml"
 if (Test-Path $configPath) {
     $txt = Get-Content $configPath -Raw -Encoding UTF8
     if ($txt -match "(?m)^public_url\s*=") {
@@ -141,7 +141,7 @@ foreach ($i in 1..15) {
 Write-Host ""
 if (-not $ok) {
     Write-Host "网关没起来？看新弹出的那个窗口里报了什么。" -ForegroundColor Red
-    if (-not $env:KEEPER_NOPAUSE) { Read-Host "按回车关闭" }
+    if (-not $env:MIWAN_NOPAUSE) { Read-Host "按回车关闭" }
     exit 1
 }
 
@@ -156,4 +156,4 @@ Write-Host ""
 Write-Host "  电脑上：刷新监控台页面，右侧二维码已是新网址"
 Write-Host "  手机上：重新扫码即可（旧二维码作废）"
 Write-Host ""
-if (-not $env:KEEPER_NOPAUSE) { Read-Host "按回车关闭" }
+if (-not $env:MIWAN_NOPAUSE) { Read-Host "按回车关闭" }
