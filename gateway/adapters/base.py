@@ -1,4 +1,4 @@
-"""Agent 接入抽象层（原型书第 19 节）。
+"""Agent 接入抽象层。
 
 设计要点不是"统一接口"，而是**承认 Agent 之间的差异**。三种 Agent 的形态差别很大：
 
@@ -68,8 +68,7 @@ class AgentStatus(str, Enum):
 class AutonomyPolicy(str, Enum):
     """Agent 被允许自主到什么程度。
 
-    **这是启动期决定，不是运行时拦截**，两种机制的区别在原型书第 22 节之外
-    但很关键：先告诉 Agent 能做什么，和先让它做再拦，是完全不同的东西。
+    **这是启动期决定，不是运行时拦截**，两种机制的区别很关键：先告诉 Agent 能做什么，和先让它做再拦，是完全不同的东西。
 
     之所以要提到抽象层：三种 Agent 表达这件事的机制完全不同
     （Claude 用 `--permission-mode`，Codex 用 `--sandbox`，OpenCode 用自己的配置），

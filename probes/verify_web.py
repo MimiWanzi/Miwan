@@ -50,6 +50,7 @@ from gateway.server import build_app  # noqa: E402
 
 TOKEN = "web-verify-token"
 DEBUG_PORT = 9333
+ROOT = Path(__file__).resolve().parent.parent
 
 READ_PROMPT = "读一下 main.py，用一句话说明它做什么。不要修改任何文件。"
 
@@ -301,12 +302,16 @@ async def main() -> int:
         print(f"中继起在 {relay.base} → {base}")
 
         try:
-            # 先把项目扫进临时库——浏览器一打开就会要 /api/projects
+            # 先把仓库根登记成项目再扫描——临时库是全新的，不能依赖"库里恰好有本仓库"
             async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{base}/api/projects?token={TOKEN}", json={"path": str(ROOT)}
+                ) as resp:
+                    await resp.read()
                 async with session.post(f"{base}/api/projects/refresh?token={TOKEN}") as resp:
                     payload = await resp.json()
             projects = payload["projects"]
-            project = next(p for p in projects if p["name"] == "RemoteAgent")
+            project = next(p for p in projects if Path(p["path"]) == ROOT)
             print(f"临时库备好：{len(projects)} 个项目")
 
             chrome = subprocess.Popen(
@@ -344,7 +349,7 @@ async def main() -> int:
                         "[...document.querySelectorAll('#view .card .name')].map(n => n.textContent)"
                     )
                     check("首页把项目列表渲染出来了", len(names) > 0, f"{len(names)} 个：{names[:3]}")
-                    check("列表里有 RemoteAgent", "RemoteAgent" in names, str(names[:5]))
+                    check("列表里有仓库根项目", project["name"] in names, str(names[:5]))
 
                     # ---- 2. 进项目页 ----
                     await cdp.js(f"location.hash = '#/p/{project['id']}'")
@@ -385,7 +390,7 @@ async def main() -> int:
                     check("任务跑完，界面显示了完成标记", True)
 
                     # ---- 5. 关掉页面重开：事件必须一条不少地补回来 ----
-                    # 这是原型书第 21 节的核心验收点，也是"库是唯一事实来源"
+                    # 这是断线恢复的核心验收点，也是"库是唯一事实来源"
                     # 换来最直接的好处：前端不需要为此存任何状态。
                     # 快照整个事件流的文本，重开之后要求**逐字一致**。
                     # 只比条数是不够的：`>=` 连"重发了两遍"都拦不住，
@@ -412,7 +417,7 @@ async def main() -> int:
                     check("重开后仍然看得到工具调用", bool(await cdp.js("!!document.querySelector('#view .call')")))
 
                     # ---- 6. 断线重连：任务在服务端继续跑 ----
-                    # 原型书第 21 节的要求展开是两句：**任务不因为手机走了而停**，
+                    # 断线恢复的要求展开是两句：**任务不因为手机走了而停**，
                     # **回来之后能接上**。第 5 节验的是"关掉页面重开"
                     # （since=0 全量补发），那只是其中一条路。这里验另一条：
                     # 连接断在半途、任务还在产事件、客户端带着游标回来。
@@ -459,7 +464,7 @@ async def main() -> int:
                     cut = relay.cut()
                     check("掐断浏览器到网关的连接（网关本身不动）", cut > 0, f"掐了 {cut} 条连接")
 
-                    # **这一条才是原型书第 21 节的原文**："Task continues"。
+                    # **这一条才是最原始的那句要求**："Task continues"。
                     # 手机这边彻底断了，任务必须在网关那边照跑。
                     # 这时候界面什么也收不到，所以不能看界面——看库。
                     grew = False

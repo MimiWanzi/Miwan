@@ -36,6 +36,8 @@ from gateway.config import load_config  # noqa: E402
 from gateway.server import build_app  # noqa: E402
 from gateway.store import Store  # noqa: E402
 
+ROOT = Path(__file__).resolve().parent.parent
+
 PROMPT = (
     "用 Glob 列出 gateway 目录下所有的 .py 文件，然后逐个 Read，"
     "最后用一句话说明每个模块负责什么。不要修改任何文件。"
@@ -99,9 +101,13 @@ async def main() -> int:
             async with aiohttp.ClientSession(
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
             ) as session:
+                async with session.post(
+                    f"{base}/api/projects?token=tok", json={"path": str(ROOT)}
+                ) as resp:
+                    await resp.read()
                 async with session.post(f"{base}/api/projects/refresh?token=tok") as resp:
                     projects = (await resp.json())["projects"]
-                project_id = next(p["id"] for p in projects if p["name"] == "RemoteAgent")
+                project_id = next(p["id"] for p in projects if Path(p["path"]) == ROOT)
 
                 async with session.post(
                     f"{base}/api/tasks", json={"project_id": project_id, "prompt": PROMPT}

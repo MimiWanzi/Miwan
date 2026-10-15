@@ -282,7 +282,7 @@ Base64 解码后 `iex`、`-join` 拼参数，任何正则清单都拦不住。
 在 Phase 5（HTTPS/WSS），在那之前远程访问走 Cloudflare 隧道（公网侧 TLS 在
 边缘终结）或干脆留在局域网。
 
-### 6. OpenCode 的会话正文读不了，非 git 目录扫不到
+### 7. OpenCode 的会话正文读不了，非 git 目录扫不到
 
 OpenCode 已接入（`opencode serve` + v1 HTTP，探针与端到端验证齐全），但有三个已知缺口：
 
@@ -299,7 +299,7 @@ OpenCode 已接入（`opencode serve` + v1 HTTP，探针与端到端验证齐全
 stderr 会报 `unrecognized_model`。功能基本可用，但这是**未验证依赖**。
 OpenCode 的后端同样是用户自配的 DeepSeek（`~/.config/opencode/opencode.json`）。
 
-### 7. 其他
+### 8. 其他
 
 - **没有 PWA / 通知推送**：被"没有 HTTPS"阻塞（service worker 需要 secure context）
 - **没有任务队列**：并发提交多个任务时的排队、限流未做

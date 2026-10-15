@@ -54,9 +54,10 @@ OUT = ROOT / "probes" / "out"
 #: `probes/scratch` 就在 ``default_blocked_paths()`` 里。
 SCRATCH = ROOT / "probes" / "scratch"
 
-CLAUDE = Path(
-    r"<claude 安装目录>\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
-)
+_claude = shutil.which("claude")
+if _claude is None:
+    raise SystemExit("PATH 上找不到 claude CLI：装好 Claude Code 再跑本探针")
+CLAUDE = Path(_claude)
 
 PROMPT = (
     "做两件事，两件都要做：\n"

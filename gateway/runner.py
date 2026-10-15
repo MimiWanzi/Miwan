@@ -1,4 +1,4 @@
-"""任务生命周期状态机（原型书第 14 节）。
+"""任务生命周期状态机。
 
     created → running → completed / failed / cancelled / disconnected
 
@@ -6,7 +6,7 @@
 :class:`~gateway.events.EventBus`，**不 import 任何 aiohttp / WebSocket 的东西**。
 把局域网直连换成云隧道时，这里零改动。
 
-三条约束来自原型书第 21 节「断线恢复」，不是为将来上云额外加的成本：
+三条约束来自「断线恢复」这个需求本身，不是为将来上云额外加的成本：
 
   1. 任务状态落盘 —— 进程重启后知道发生过什么
   2. 事件带单调递增 seq 持久化 —— 重连时从 last_seq 补发

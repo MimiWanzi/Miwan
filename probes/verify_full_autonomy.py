@@ -100,11 +100,15 @@ async def main() -> int:
 
         try:
             async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{base}/api/projects?token={TOKEN}", json={"path": str(ROOT)}
+                ) as resp:
+                    await resp.read()
                 async with session.post(f"{base}/api/projects/refresh?token={TOKEN}") as resp:
                     projects = (await resp.json())["projects"]
-                project = next((p for p in projects if p["name"] == "RemoteAgent"), None)
+                project = next((p for p in projects if Path(p["path"]) == ROOT), None)
                 if project is None:
-                    print("找不到 RemoteAgent 项目，无法验收。")
+                    print("找不到仓库根对应的项目，无法验收。")
                     return 2
                 print(f"项目：{project['path']}")
 

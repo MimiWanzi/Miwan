@@ -99,7 +99,7 @@ HITS: list[tuple[str, str, dict]] = [
 # ----------------------------------------------------------------------
 
 CLEAN: list[tuple[str, str, dict]] = [
-    ("读文件", "Read", {"file_path": "D:\\RemoteAgent\\main.py"}),
+    ("读文件", "Read", {"file_path": "D:\\Miwan\\main.py"}),
     ("写文件", "Write", {"file_path": "a.txt", "content": "hello"}),
     ("改文件", "Edit", {"file_path": "a.py", "old_string": "x", "new_string": "y"}),
     ("搜索", "Grep", {"pattern": "def main", "path": "gateway"}),
