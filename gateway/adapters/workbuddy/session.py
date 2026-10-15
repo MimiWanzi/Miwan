@@ -299,7 +299,7 @@ class WorkBuddySession(AgentSession):
                     "subtype": "success",
                     "response": {
                         "behavior": "deny",
-                        "message": "RemoteAgent 网关无人值守模式：未放行的操作一律拒绝",
+                        "message": "Keeper 网关无人值守模式：未放行的操作一律拒绝",
                     },
                 },
             }

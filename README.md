@@ -1,4 +1,4 @@
-# Remote Agent Workspace
+# Keeper
 
 离开电脑之后，仍然能用手机发现、下达、盯着你电脑上的 AI Agent。
 
@@ -139,7 +139,7 @@ python -m gateway serve
 启动后横幅长这样：
 
 ```
-Remote Agent Workspace · Gateway
+Keeper · Gateway
 ────────────────────────────────────────────────────────────────
   本机    http://127.0.0.1:8765/
   局域网  http://192.168.1.23:8765/
@@ -196,12 +196,12 @@ python -m gateway run --prompt "读一下 README.md，用一句话说这个项�
 build_exe.cmd
 ```
 
-产物 `dist\RemoteAgent.exe`，单文件、双击就跑：自动在本机浏览器打开控制台
+产物 `dist\Keeper.exe`，单文件、双击就跑：自动在本机浏览器打开控制台
 （带主机登录链接，不用手抄 token），命令行参数与 `python -m gateway` 完全一致
-（比如 `RemoteAgent.exe serve --port 8765`）。配置和数据统一放在 **`%LOCALAPPDATA%\RemoteAgent\`**——
+（比如 `Keeper.exe serve --port 8765`）。配置和数据统一放在 **`%LOCALAPPDATA%\Keeper\`**——
 和 `python -m gateway` 读的是同一份，两种启动方式看到的项目、配对、历史完全一样；
 exe 拷到哪个文件夹都连同一份数据。给别人用：对方机器首次运行自动生成全新配置
-（想换位置设环境变量 `REMOTE_AGENT_HOME`）。
+（想换位置设环境变量 `KEEPER_HOME`）。
 
 ## 测试与验收
 
@@ -263,7 +263,7 @@ Base64 解码后 `iex`、`-join` 拼参数，任何正则清单都拦不住。
 
 ### 4. 主机 token 不过期、不可吊销
 
-应用目录下的 `data/token.txt`（`%LOCALAPPDATA%\RemoteAgent\data\`）是根凭证。改它不影响已配对的设备凭证（两套是独立的），
+应用目录下的 `data/token.txt`（`%LOCALAPPDATA%\Keeper\data\`）是根凭证。改它不影响已配对的设备凭证（两套是独立的），
 但持有它的人等于持有这台机器。
 
 ### 5. 配对限流的状态在内存里
@@ -341,7 +341,7 @@ OpenCode 的后端同样是用户自配的 DeepSeek（`~/.config/opencode/openco
 ## 目录结构
 
 ```
-RemoteAgent/
+Keeper/
 ├── gateway/            后端（见上方架构图）
 ├── web/                前端：index.html / app.js / style.css，零依赖无构建
 ├── probes/             探针与验收脚本
@@ -352,7 +352,7 @@ RemoteAgent/
 ├── docs/
 │   ├── security-notes.md            凭证模型与已知限制
 │   └── adapter-extension-notes.md   接新 Agent 之前必读
-└── （运行时数据不在仓库里：%LOCALAPPDATA%\RemoteAgent\data\，token 与 SQLite 库都在这）
+└── （运行时数据不在仓库里：%LOCALAPPDATA%\Keeper\data\，token 与 SQLite 库都在这）
 ```
 
 前端是**零依赖、无构建**的：三个静态文件，改完刷新浏览器就是。这样手机端不需要
@@ -360,7 +360,7 @@ RemoteAgent/
 
 ## 安全须知
 
-- **运行数据目录绝不外传**：`%LOCALAPPDATA%\RemoteAgent\data\` 里有 `token.txt`
+- **运行数据目录绝不外传**：`%LOCALAPPDATA%\Keeper\data\` 里有 `token.txt`
   （主机根凭证）和 `gateway.db`（含设备凭证的哈希）。仓库里的 `data/` 是历史遗留，
   同样别提交。
 - 网关默认监听 `0.0.0.0`，**整个局域网可达**。在咖啡厅、公司网络这类环境里要么

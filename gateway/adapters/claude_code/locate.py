@@ -22,8 +22,8 @@ from ..known_locations import (
 )
 
 #: 允许用环境变量覆盖，便于换机器或不走默认安装路径。
-EXE_ENV = "REMOTE_AGENT_CLAUDE_EXE"
-PROJECTS_DIR_ENV = "REMOTE_AGENT_CLAUDE_PROJECTS_DIR"
+EXE_ENV = "KEEPER_CLAUDE_EXE"
+PROJECTS_DIR_ENV = "KEEPER_CLAUDE_PROJECTS_DIR"
 
 
 def known_dirs() -> list[KnownDir]:
@@ -48,7 +48,7 @@ def find_exe() -> Path | None:
     先 ``shutil.which``；PATH 没有（双击 exe 拿到的 PATH 可能是 Explorer
     会话的旧值）再逐个试官方安装落点。安装位置随安装方式变，所以兜底
     只收有实证的位置，不写死大概率失效的候选路径。
-    which 找到的若是 shim（.cmd/.ps1），上面 REMOTE_AGENT_CLAUDE_EXE
+    which 找到的若是 shim（.cmd/.ps1），上面 KEEPER_CLAUDE_EXE
     可以指到真正的原生可执行文件——双工管道不希望中间多一层 shell。
     """
     override = os.environ.get(EXE_ENV)

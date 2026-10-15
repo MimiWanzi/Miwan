@@ -1,4 +1,4 @@
-/* Remote Agent Workspace — 第 5 层前端（原生 ES 模块，无构建步骤）
+/* Keeper — 第 5 层前端（原生 ES 模块，无构建步骤）
  *
  * 三条约束决定了这里几乎所有写法：
  *
@@ -1256,7 +1256,7 @@ function buildOnboardingCard(agentsPayload, me) {
 }
 
 async function viewProjects() {
-  setTitle("Remote Agent Workspace");
+  setTitle("Keeper");
   setBack(null);
 
   const view = $("#view");

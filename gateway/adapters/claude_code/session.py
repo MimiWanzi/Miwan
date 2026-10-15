@@ -180,7 +180,7 @@ class ClaudeSession(AgentSession):
         """
         if self._mcp_config_path is not None:
             self._mcp_config_path.unlink(missing_ok=True)
-        fd, raw = tempfile.mkstemp(prefix="remote-agent-mcp-", suffix=".json")
+        fd, raw = tempfile.mkstemp(prefix="keeper-mcp-", suffix=".json")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(
                 {
