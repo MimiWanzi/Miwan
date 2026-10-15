@@ -14,8 +14,7 @@ agents (Claude Code, Codex, Qoder, CodeBuddy, OpenCode) into a service you can
 operate from a phone browser. No app, no account, no vendor cloud.
 
 > Status: five agents wired up and end-to-end tested. Transport is plaintext
-> HTTP for now — a deliberate, documented deferral, not an oversight
-> (see `docs/security-notes.md`).
+> HTTP for now — a deliberate deferral, not an oversight.
 
 <!-- TODO: add a screenshot / GIF of the phone dashboard here — this is the project's best selling point. -->
 
@@ -41,7 +40,6 @@ operate from a phone browser. No app, no account, no vendor cloud.
 | Codex | `codex exec` per turn, sandbox tiers | ❌ deny-only |
 
 Adding an agent is an Adapter subpackage + a registry entry — the core does not change.
-Read `docs/adapter-extension-notes.md` first.
 
 ## Quick start
 
@@ -78,17 +76,6 @@ Everything lives in one app directory: `%LOCALAPPDATA%\Miwan\` (override with
 `config.toml` may contain a token — never commit it. Priority:
 CLI flags > `MIWAN_*` env vars > `config.toml` > built-in defaults.
 
-## Documentation
-
-| Doc | What it answers |
-|---|---|
-| `docs/architecture.md` | why it's built this way, how modules interact |
-| `docs/product.md` | who it's for, what it solves |
-| `docs/security-notes.md` | credential model and known limitations |
-| `docs/roadmap.md` | what's next |
-| `docs/adapter-extension-notes.md` | notes to read before adding an agent |
-| `CLAUDE.md` | engineering rules for AI contributors |
-
 ## Testing
 
 Acceptance is end-to-end probes, not unit tests — the things that break live
@@ -110,10 +97,10 @@ and consume quota. `verify_liveness.mjs` does not.
 
 ## Contributing
 
-Issues and PRs are welcome — especially new agent adapters (read
-`docs/adapter-extension-notes.md` first), probe hardening, and real-device
-feedback. For a detection problem, run `python -m gateway doctor` and paste the
-full output.
+Issues and PRs are welcome — especially new agent adapters, probe hardening,
+and real-device feedback. See `CLAUDE.md` for the engineering rules we hold
+new adapters to. For a detection problem, run `python -m gateway doctor` and
+paste the full output.
 
 ## License
 
@@ -130,7 +117,7 @@ Miwan 是跑在你自己电脑上的本地网关：把 Claude Code 这类 CLI Ag
 浏览器，不装 App、不注册账号、没有厂商云。
 
 > 当前状态：已接入五个 Agent 并有端到端验收。传输目前是明文 HTTP——这是明确推迟、
-> 且已记录的决定，不是遗漏（见 `docs/security-notes.md`）。
+> 且已记录的决定，不是遗漏。
 
 ### 能做什么
 
@@ -185,17 +172,6 @@ python -m gateway serve       # 起网关（打印配对码）
 
 `config.toml` 可能含 token，**别提交**。优先级：命令行 > `MIWAN_*` 环境变量 > `config.toml` > 默认。
 
-### 文档
-
-| 文档 | 内容 |
-|---|---|
-| `docs/architecture.md` | 系统为什么这么设计、模块如何协作 |
-| `docs/product.md` | 用户是谁、解决什么问题 |
-| `docs/security-notes.md` | 凭证模型与已知限制 |
-| `docs/roadmap.md` | 接下来建设什么 |
-| `docs/adapter-extension-notes.md` | 接新 Agent 之前必读 |
-| `CLAUDE.md` | AI 改代码必须遵守的工程规则 |
-
 ### 测试与验收
 
 验收是端到端探针，不是单元测试——会出错的地方都在接缝上（事件抽取、断线恢复、权限拦截、凭证流转）。
@@ -216,7 +192,7 @@ node   probes/verify_liveness.mjs      # 前端探活逻辑——免费、毫秒
 
 ### 参与
 
-欢迎 Issue / PR：新 Agent 适配（先读 `docs/adapter-extension-notes.md`）、探针补强、真机反馈。
+欢迎 Issue / PR：新 Agent 适配、探针补强、真机反馈。新增 Adapter 的工程规则见 `CLAUDE.md`。
 扫不到 Agent 时先跑 `python -m gateway doctor`，把输出整段贴上来。
 
 ### 许可
