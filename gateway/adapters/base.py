@@ -16,9 +16,8 @@
 **核心层（runner / api / ws）只 import 这个模块，永远不 import 具体 Adapter。**
 新增一个 Agent = 新增一个子包 + 在 ``adapters/__init__.py`` 注册，核心层零改动。
 
-接新 Agent 之前先读 ``docs/adapter-extension-notes.md``：里面记着 Codex 与 OpenCode
-的调研结论，以及这套抽象**目前唯一已知的真实缺口**（agent 可能中途停下来要人批准，
-而 :meth:`AgentSession.send` 现在假设它一定会返回）。
+这套抽象**目前唯一已知的真实缺口**：agent 可能中途停下来要人批准，而
+:meth:`AgentSession.send` 现在假设它一定会返回。
 """
 
 from __future__ import annotations

@@ -140,7 +140,7 @@ Miwan 是跑在你自己电脑上的本地网关：把 Claude Code 这类 CLI Ag
 | WorkBuddy（CodeBuddy CLI） | Anthropic 同族 stream-json | ❌ deny-only |
 | Codex | `codex exec` 每回合进程 / 沙箱三档 | ❌ deny-only |
 
-新增 Agent = 新增 Adapter 子包 + 注册，核心不动。动手前先读 `docs/adapter-extension-notes.md`。
+新增 Agent = 新增 Adapter 子包 + 注册，核心不动。
 
 ### 快速开始
 

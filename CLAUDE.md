@@ -19,7 +19,7 @@ Python 3.12 / aiohttp / SQLite，前端 web/ 三个静态文件零构建。
 12. **保持现有 Agent 正常工作**：每次接入/重构后，已有 Agent 的探针必须仍然全绿
 13. **修改前优先复用现有 Gateway / Registry / Session / Event 能力**
 14. **第三方 Agent / Plugin 是可执行代码不是配置文件**，必须考虑执行权限与信任边界
-15. **Remote 场景必须考虑 HTTPS/WSS**（本地开发 HTTP/WS 可接受，见 `docs/roadmap.md` Phase 5 安全阶梯）
+15. **Remote 场景必须考虑 HTTPS/WSS**（本地开发 HTTP/WS 可接受）
 16. 如果现有抽象无法优雅接入第三个 Agent，**先修抽象，再继续接入**
 
 ## 架构验收指标
@@ -34,12 +34,9 @@ Agent/Project/Session/Task/Event 依次为被管理的 Agent、工作目录、�
 
 ## 文档职责（不要互相复制）
 
-| 文件 | 回答什么 |
-|---|---|
-| `CLAUDE.md`（本文件） | AI 改代码必须遵守什么 |
-| `docs/roadmap.md` | 接下来建设什么（按代码现状标注完成度） |
-| `docs/architecture.md` | 系统为什么这么设计、模块如何协作 |
-| `docs/product.md` | 用户是谁、解决什么问题、怎么演进 |
+对外门面是 `README.md`。更详细的设计 / 产品 / 路线说明写在本地 `docs/` 下，
+`.gitignore` 已忽略、不进公开仓库，仅供本地 AI 与作者参考——不要把它们的内容
+复制进 README。
 
 ## 速查
 
