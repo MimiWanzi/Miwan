@@ -26,7 +26,7 @@ from pathlib import Path
 from ..diagnose import DiagRow, config_row, path_rows
 
 #: 允许用环境变量覆盖会话存储位置（探针用假 rollout 文件喂 discovery）。
-SESSIONS_DIR_ENV = "REMOTE_AGENT_CODEX_SESSIONS_DIR"
+SESSIONS_DIR_ENV = "KEEPER_CODEX_SESSIONS_DIR"
 
 VERSION_TIMEOUT = 60.0
 """rust 二进制冷启动比 node 快，但 Desktop 版首次运行可能做自检，超时仍给宽。"""

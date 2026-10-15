@@ -277,7 +277,7 @@ def _presented_token(request: web.Request) -> str | None:
 _STUB_PAGE = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Remote Agent Workspace</title>
+<title>Keeper</title>
 <style>
  body{font:15px/1.7 system-ui,sans-serif;margin:0;padding:24px;max-width:720px;
       background:#14161a;color:#e6e8eb}
@@ -287,7 +287,7 @@ _STUB_PAGE = """<!doctype html>
  td:first-child{width:11em;white-space:nowrap}
  .m{color:#6ee7a8;font-weight:600}
 </style></head><body>
-<h1>Remote Agent Workspace · Gateway</h1>
+<h1>Keeper · Gateway</h1>
 <p>接口已经在跑。没找到 <code>web/index.html</code>，先给一份清单，
 好让接口能被手工点一遍。</p>
 <table>
@@ -442,10 +442,10 @@ def _print_banner(config: Config, ctx: GatewayContext) -> None:
     port = config.port
     code = ctx.auth.issue_code()
     # exe 用户手里没有 python -m gateway，换码命令得说他们能跑的那条
-    code_cmd = "RemoteAgent.exe code" if getattr(sys, "frozen", False) else "python -m gateway code"
+    code_cmd = "Keeper.exe code" if getattr(sys, "frozen", False) else "python -m gateway code"
     lines = [
         "",
-        "Remote Agent Workspace · Gateway",
+        "Keeper · Gateway",
         "─" * 64,
         f"  本机    http://127.0.0.1:{port}/",
     ]

@@ -1,12 +1,12 @@
-# Remote Agent 网关配置。
+# Keeper 网关配置。
 #
-# 用法：复制本文件为 config.toml，放到应用目录（%LOCALAPPDATA%\RemoteAgent\）
-# 按需改；想放别处就用环境变量 REMOTE_AGENT_CONFIG 指定完整路径
-# （REMOTE_AGENT_HOME 则是整个应用目录搬家，配置和数据一起走）。
-# 优先级：命令行 --host/--port > 环境变量 REMOTE_AGENT_* > config.toml > 内置默认。
+# 用法：复制本文件为 config.toml，放到应用目录（%LOCALAPPDATA%\Keeper\）
+# 按需改；想放别处就用环境变量 KEEPER_CONFIG 指定完整路径
+# （KEEPER_HOME 则是整个应用目录搬家，配置和数据一起走）。
+# 优先级：命令行 --host/--port > 环境变量 KEEPER_* > config.toml > 内置默认。
 # 写了不认识的节或键，启动时会点名警告——"配置不生效"先看那里
 # （注意：放仓库根的 config.toml 不会被读到，配置文件只在应用目录或
-# REMOTE_AGENT_CONFIG 指定的路径找；启动横幅的「配置」一行会打印实际
+# KEEPER_CONFIG 指定的路径找；启动横幅的「配置」一行会打印实际
 # 生效的路径，拿不准就看它）。
 #
 # config.toml 里可能有 token，绝不要提交进仓库。
@@ -21,7 +21,7 @@ port = 8765
 public_url = ""
 
 [storage]
-# 任务、事件、设备的落盘目录。相对路径锚定应用目录（%LOCALAPPDATA%\RemoteAgent）。
+# 任务、事件、设备的落盘目录。相对路径锚定应用目录（%LOCALAPPDATA%\Keeper）。
 # 通常不用改：配置和数据统一住在应用目录，与从哪里启动、用 python 还是 exe 无关。
 data_dir = "data"
 

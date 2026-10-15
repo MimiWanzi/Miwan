@@ -1,6 +1,6 @@
 # CLAUDE.md — AI 修改代码必须遵守的规则
 
-Remote Agent：Local-First 的个人 Agent Control Plane（手机统一发现/派遣/观察/审批电脑上的 AI Agent）。
+Keeper：Local-First 的个人 Agent Control Plane（手机统一发现/派遣/观察/审批电脑上的 AI Agent）。
 Python 3.12 / aiohttp / SQLite，前端 web/ 三个静态文件零构建。
 
 ## 工程规则
@@ -43,6 +43,6 @@ Agent/Project/Session/Task/Event 依次为被管理的 Agent、工作目录、�
 
 ## 速查
 
-- 配置 + 数据：`%LOCALAPPDATA%\RemoteAgent\`（与启动方式无关；`REMOTE_AGENT_HOME` 可覆盖）
+- 配置 + 数据：`%LOCALAPPDATA%\Keeper\`（与启动方式无关；`KEEPER_HOME` 可覆盖）
 - 验收：`python probes/verify_api.py` 等（烧真实额度）；改前端先跑 `node probes/verify_liveness.mjs`（免费）
-- exe 打包：`build_exe.cmd` → `dist\RemoteAgent.exe`
+- exe 打包：`build_exe.cmd` → `dist\Keeper.exe`

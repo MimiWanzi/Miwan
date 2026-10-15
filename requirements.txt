@@ -1,4 +1,4 @@
-# Remote Agent Workspace · Local Agent Gateway
+# Keeper · Local Agent Gateway
 #
 # 本机已确认可用版本：Python 3.12.7 / aiohttp 3.10.5 / pydantic 2.8.2
 # SQLite 用标准库 sqlite3，不引 ORM。

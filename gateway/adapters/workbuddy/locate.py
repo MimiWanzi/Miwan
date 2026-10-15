@@ -27,7 +27,7 @@ from pathlib import Path
 from ..diagnose import DiagRow, config_row, path_rows
 
 #: 允许用环境变量覆盖会话存储位置（CLI 自己认 CODEBUDDY_CONFIG_DIR 时用）。
-PROJECTS_DIR_ENV = "REMOTE_AGENT_WORKBUDDY_PROJECTS_DIR"
+PROJECTS_DIR_ENV = "KEEPER_WORKBUDDY_PROJECTS_DIR"
 
 VERSION_TIMEOUT = 60.0
 """node 冷启动 + 首次加载 11MB bundle，比普通二进制慢，超时给宽。"""
