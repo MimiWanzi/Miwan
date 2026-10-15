@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 class EventType(str, Enum):
     """MVP-0 的最小事件集。
 
-    后续可扩充原型书第 15 节的 file_read / file_write / test_started 等——
+    后续可扩充 file_read / file_write / test_started 等——
     多数可由 TOOL_CALL 加上工具名派生，不必让 Adapter 单独上报。
     """
 

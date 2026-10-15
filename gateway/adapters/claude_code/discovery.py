@@ -8,8 +8,8 @@
 
   - 所有解析都包在 try/except 里：单个文件坏了只跳过它，不影响整体扫描
   - 真实路径从 JSONL 里的 ``cwd`` 字段读，**不反解目录名**——转义规则不可靠
-    （实测 ``D:\\RemoteAgent\\probes\\scratch`` 会被转义成
-     ``D--RemoteAgent-probes-scratch``，但路径里本来就带连字符时无法可靠区分，
+    （实测 ``D:\\Miwan\\probes\\scratch`` 会被转义成
+     ``D--Miwan-probes-scratch``，但路径里本来就带连字符时无法可靠区分，
      所以干脆不猜。实测还发现磁盘上真有个目录叫 ``wd1@002d1@002dsh@...``，
      进一步证明目录名不可反解）
 

@@ -1,4 +1,4 @@
-"""Agent 接入抽象层（原型书第 19 节）。
+"""Agent 接入抽象层。
 
 设计要点不是"统一接口"，而是**承认 Agent 之间的差异**。三种 Agent 的形态差别很大：
 
@@ -68,8 +68,7 @@ class AgentStatus(str, Enum):
 class AutonomyPolicy(str, Enum):
     """Agent 被允许自主到什么程度。
 
-    **这是启动期决定，不是运行时拦截**，两种机制的区别在原型书第 22 节之外
-    但很关键：先告诉 Agent 能做什么，和先让它做再拦，是完全不同的东西。
+    **这是启动期决定，不是运行时拦截**，两种机制的区别很关键：先告诉 Agent 能做什么，和先让它做再拦，是完全不同的东西。
 
     之所以要提到抽象层：三种 Agent 表达这件事的机制完全不同
     （Claude 用 `--permission-mode`，Codex 用 `--sandbox`，OpenCode 用自己的配置），
@@ -178,8 +177,8 @@ class AgentInfo(BaseModel):
 class BlockFilter:
     """项目屏蔽过滤器。
 
-    只做**精确匹配**，不做前缀匹配。原因：``C:\\Users\\lhy`` 是噪音，
-    但它的子目录 ``C:\\Users\\lhy\\Desktop\\task_scheduler`` 是真实项目，
+    只做**精确匹配**，不做前缀匹配。原因：``C:\\Users\\<用户名>`` 是噪音，
+    但它的子目录 ``C:\\Users\\<用户名>\\Desktop\\task_scheduler`` 是真实项目，
     前缀匹配会把后者一并误杀。
     """
 

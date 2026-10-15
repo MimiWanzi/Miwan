@@ -181,8 +181,8 @@ def default_blocked_paths() -> tuple[Path, ...]:
       - 探针工作目录：我们自己造的
       - Gateway 自己的 data 目录
 
-    只做**精确匹配**，不做前缀匹配——因为 ``C:\\Users\\lhy`` 是噪音，
-    但它的子目录 ``C:\\Users\\lhy\\Desktop\\task_scheduler`` 是真实项目。
+    只做**精确匹配**，不做前缀匹配——因为 ``C:\\Users\\<用户名>`` 是噪音，
+    但它的子目录 ``C:\\Users\\<用户名>\\Desktop\\task_scheduler`` 是真实项目。
     前缀匹配会把后者一并误杀。
     """
     return (

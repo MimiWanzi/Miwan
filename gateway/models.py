@@ -1,4 +1,4 @@
-"""核心实体模型（对应原型书第 10 节）。
+"""核心实体模型。
 
 实体关系：Project → Session → Task → Event
 """
@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 
 class TaskStatus(str, Enum):
-    """任务状态机（原型书第 14 节）。
+    """任务状态机。
 
     正常路径：
         created → queued → running → completed

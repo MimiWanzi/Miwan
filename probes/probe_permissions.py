@@ -49,14 +49,15 @@ OUT = ROOT / "probes" / "out"
 #: 四个垃圾条目——跑一次探针污染一次用户的项目列表。
 #:
 #: 根因是 :class:`~gateway.adapters.base.BlockFilter` 只做**精确匹配**
-#: （这是对的：前缀匹配会误杀 `C:\Users\lhy` 下的真实项目）。
+#: （这是对的：前缀匹配会误杀 `C:\Users\<用户名>` 下的真实项目）。
 #: 所以探针不能指望"在屏蔽目录的子目录里跑"，得直接用被屏蔽的那个目录本身。
 #: `probes/scratch` 就在 ``default_blocked_paths()`` 里。
 SCRATCH = ROOT / "probes" / "scratch"
 
-CLAUDE = Path(
-    r"E:\ProgramFiles\nodejs\node_global\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
-)
+_claude = shutil.which("claude")
+if _claude is None:
+    raise SystemExit("PATH 上找不到 claude CLI：装好 Claude Code 再跑本探针")
+CLAUDE = Path(_claude)
 
 PROMPT = (
     "做两件事，两件都要做：\n"

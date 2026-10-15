@@ -45,8 +45,8 @@ OUT_DIR = PROBE_DIR / "out"          # 原始样本落盘位置
 
 # claude CLI 是原生可执行文件，直接调用它，绕开 .cmd/.ps1 shim，
 # 双工管道不会被 cmd.exe 干扰。
+# 默认信任 PATH 上的 claude；装在非标准位置的就加进 EXE_CANDIDATES。
 EXE_CANDIDATES = [
-    Path(r"E:\ProgramFiles\nodejs\node_global\node_modules\@anthropic-ai\claude-code\bin\claude.exe"),
 ]
 
 # Windows 上 Claude Code 的 shell 工具叫 PowerShell，**不叫 Bash**。
@@ -56,7 +56,7 @@ EXE_CANDIDATES = [
 #   ExitWorktree, Glob, Grep, ListAgents, NotebookEdit, PowerShell, Read,
 #   ReportFindings, ScheduleWakeup, SendMessage, Skill, TaskStop, WebFetch,
 #   WebSearch, Workflow, Write
-# 含义：原型书 16.10 列的危险命令样本（rm / sudo / git push）是 bash 语法，
+# 含义：早期探针列的危险命令样本（rm / sudo / git push）是 bash 语法，
 #      Windows 下拦截规则要按 PowerShell 语法重写。
 SHELL_TOOL = "PowerShell"
 

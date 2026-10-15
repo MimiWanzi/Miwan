@@ -17,8 +17,13 @@ $ErrLog = Join-Path $Root "data\tunnel.err.log"
 # exe 的候选位置：脚本旁边、dist\ 里
 $GatewayExe = @((Join-Path $Root "Miwan.exe"), (Join-Path $Root "dist\Miwan.exe")) |
     Where-Object { Test-Path $_ } | Select-Object -First 1
-$Python = @("D:\programFiles\miniconda\envs\RemoteAgent\python.exe", "python") |
-    Where-Object { $_ -eq "python" -or (Test-Path $_) } | Select-Object -First 1
+# 解释器：默认信任 PATH 上的 python；装了多个 Python 时把你的那份完整路径加进候选
+$Python = @("python") |
+    Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+if (-not $GatewayExe -and -not $Python) {
+    Write-Host "没找到 python（不在 PATH 上）：把本脚本上面 \$Python 的候选里加一条你的 python.exe 完整路径，或装好 Python 后重试。" -ForegroundColor Red
+    exit 1
+}
 # cloudflared 查找顺序：应用目录（本脚本自动下载的那份）→ 开发机安装位置 → PATH。
 # 都没有就自动下载——普通用户不该被要求认识 cloudflared，缺什么脚本自己补。
 # 下载源固定为 Cloudflare 官方 releases（HTTPS）；落到应用目录，免管理员权限。
