@@ -1,6 +1,11 @@
 # Miwan
 
-离开电脑之后，仍然能用手机发现、下达、盯着你电脑上的 AI Agent。
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
+
+**离开电脑之后，仍然能用手机发现、下达、盯着你电脑上的 AI Agent。**
+*Discover, dispatch, watch and approve the AI agents on your PC — right from your phone.*
 
 这是它的**本地网关**（Local Agent Gateway）：跑在你自己的电脑上，把 Claude Code
 这类 Agent 包成一个可远程操作的服务——发现项目、下达任务、实时看它每一步在做什么、
@@ -236,7 +241,7 @@ node   probes/verify_liveness.mjs      # 前端探活逻辑（确定性、免费
 
 ### 1. 传输是明文 HTTP，局域网内可被嗅探
 
-同一网段的人抓包能拿到 cookie 和配对时的码。用户 2026-09-30 明确决定推迟。
+同一网段的人抓包能拿到 cookie 和配对时的码。这是作者 2026-09-30 明确决定推迟的，不是遗漏。
 
 **还债时点是明确的**：只要还想做 PWA，就必须上 HTTPS——service worker 只在
 secure context 里可用。所以做 PWA 之前这件事必须还，不能一直拖。
@@ -295,9 +300,9 @@ OpenCode 已接入（`opencode serve` + v1 HTTP，探针与端到端验证齐全
 - **档位跟着会话走**：OpenCode 的权限规则集在**建会话时**一次性交给它，
   之后改不了。给一个会话续接任务时沿用的是创建时的档位边界，中途换档不生效。
 
-另外本机 Claude Code 的后端是 `deepseek-flash`、`apiKeySource: none`，
-stderr 会报 `unrecognized_model`。功能基本可用，但这是**未验证依赖**。
-OpenCode 的后端同样是用户自配的 DeepSeek（`~/.config/opencode/opencode.json`）。
+另外，Agent 的后端模型由各家自己的配置决定（作者实测机把 Claude Code 和 OpenCode
+都指向了 DeepSeek）：非官方模型时 Claude Code 的 stderr 会报 `unrecognized_model`
+（`apiKeySource: none` 组合实测见过）。功能基本可用，但这是**未验证依赖**。
 
 ### 8. 其他
 
@@ -352,6 +357,10 @@ Miwan/
 ├── docs/
 │   ├── security-notes.md            凭证模型与已知限制
 │   └── adapter-extension-notes.md   接新 Agent 之前必读
+├── build_exe.cmd                    打包单文件 exe（产物 dist\Miwan.exe）
+├── config.example.toml              配置模板（复制进应用目录改名为 config.toml）
+├── 重连隧道.cmd / reconnect_tunnel.ps1   Cloudflare 临时隧道断线后一键重连
+├── 产品介绍书.md                     一页纸产品介绍（能力 / 对比 / 路线）
 └── （运行时数据不在仓库里：%LOCALAPPDATA%\Miwan\data\，token 与 SQLite 库都在这）
 ```
 
@@ -379,6 +388,14 @@ Miwan/
 | `docs/product.md` | 产品定位：用户是谁、解决什么问题、怎么演进 |
 | `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
 | `docs/adapter-extension-notes.md` | 接新 Agent 之前必读：各家协议差异与实测结论 |
+
+## 参与
+
+- **Issue**：Agent 扫不到、某家 CLI 协议变更、真机适配问题，都欢迎开；环境类问题请先跑
+  `python -m gateway doctor`，把输出整段贴上来
+- **PR**：新 Agent 的 Adapter（**先读 `docs/adapter-extension-notes.md`**，那里有各家协议
+  差异与实测结论）、探针补强、文档纠错。接入流程与验收标准见 `CLAUDE.md`：
+  能力探针 → Adapter 子包 → 注册 → E2E，能力声明（`AgentCapabilities`）必须如实
 
 ## 许可
 
