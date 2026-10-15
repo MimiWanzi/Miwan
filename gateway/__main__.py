@@ -682,7 +682,7 @@ def cmd_info(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gateway",
-        description="Keeper · Local Agent Gateway",
+        description="Miwan · Local Agent Gateway",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -721,7 +721,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_serve = sub.add_parser("serve", help="启动 HTTP / WebSocket 网关")
     p_serve.add_argument("--host", help="监听地址，默认 0.0.0.0（局域网可达）")
-    p_serve.add_argument("--port", type=int, help="监听端口，默认 8765（KEEPER_PORT 可覆盖）")
+    p_serve.add_argument("--port", type=int, help="监听端口，默认 8765（MIWAN_PORT 可覆盖）")
     p_serve.add_argument("--open", action="store_true",
                          help="启动后用本机浏览器打开控制台（带主机登录链接，exe 双击场景用）")
     p_serve.set_defaults(func=cmd_serve)

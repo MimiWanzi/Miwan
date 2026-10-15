@@ -5,9 +5,9 @@
 配置有四个来源，优先级从高到低（高的覆盖低的）：
 
   1. 命令行参数（``serve --host / --port``）
-  2. 环境变量 ``KEEPER_*``
-  3. TOML 配置文件：``KEEPER_CONFIG`` 指定的路径，或应用目录（Windows 是
-     ``%LOCALAPPDATA%\\Keeper``）下的 ``config.toml``
+  2. 环境变量 ``MIWAN_*``
+  3. TOML 配置文件：``MIWAN_CONFIG`` 指定的路径，或应用目录（Windows 是
+     ``%LOCALAPPDATA%\\Miwan``）下的 ``config.toml``
   4. 内置默认值——什么都没配也能起（自部署的第一次体验必须是"直接能跑"）
 
 配置文件是给"迁移给别人用"的主入口：对方只改一个文件，不用翻代码。
@@ -51,27 +51,30 @@ def _app_dir() -> Path:
     必须与**从哪里启动、用 python 还是 exe 无关**——以前 python 启动用仓库根、
     exe 启动用 exe 旁边，两份数据库互不相认，换个启动方式"项目就没了"。
     """
-    if env := os.environ.get("KEEPER_HOME"):
+    if env := os.environ.get("MIWAN_HOME"):
         return Path(env).expanduser()
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return _migrate_app_dir(Path(base) / "Keeper", Path(base) / "RemoteAgent")
-    return _migrate_app_dir(Path.home() / ".keeper", Path.home() / ".remote-agent")
+        return _migrate_app_dir(
+            Path(base) / "Miwan", (Path(base) / "Keeper", Path(base) / "RemoteAgent"))
+    return _migrate_app_dir(
+        Path.home() / ".miwan", (Path.home() / ".keeper", Path.home() / ".remote-agent"))
 
 
-def _migrate_app_dir(new: Path, old: Path) -> Path:
-    """项目从 RemoteAgent 改名 Keeper 的一次性迁移：老安装把整个应用目录搬过来。
+def _migrate_app_dir(new: Path, olds: tuple[Path, ...]) -> Path:
+    """项目改名链（RemoteAgent → Keeper → Miwan）的一次性迁移：老安装整目录平移。
 
     token、配对凭证、config.toml、cloudflared 全住在应用目录里，改名不该让用户
     重新配对。旧网关还在跑时目录被占用搬不动，就继续用旧目录，下次启动再试。
     """
-    if not new.exists() and old.exists():
-        try:
-            old.rename(new)
-        except OSError:
-            print(f"警告：旧应用目录被占用，本次继续用 {old}；关掉旧进程后重启可完成迁移",
-                  file=sys.stderr)
-            return old
+    for old in olds:
+        if not new.exists() and old.exists():
+            try:
+                old.rename(new)
+            except OSError:
+                print(f"警告：旧应用目录被占用，本次继续用 {old}；关掉旧进程后重启可完成迁移",
+                      file=sys.stderr)
+                return old
     return new
 
 
@@ -79,7 +82,7 @@ APP_DIR = _app_dir()
 
 #: 自动查找的配置文件名。
 #:
-#: 位置是**应用目录**（``_app_dir()``，Windows 上是 ``%LOCALAPPDATA%\Keeper``），
+#: 位置是**应用目录**（``_app_dir()``，Windows 上是 ``%LOCALAPPDATA%\Miwan``），
 #: **不是仓库根**——v2 把配置和数据统一搬进应用目录之后，放在仓库根的那份就不再
 #: 被读了。这条注释以前写的是"仓库根"，是迁移时漏改的，误导过一轮排查。
 #: 位置只有一个答案，由下面的 :data:`CONFIG_PATH` 给出，各处提示语都引用它。
@@ -294,10 +297,10 @@ def load_config(path: str | Path | None = None) -> Config:
         explicit = Path(path)
         if not explicit.is_file():
             raise SystemExit(f"指定的配置文件不存在：{explicit}")
-    elif env_path := os.environ.get("KEEPER_CONFIG"):
+    elif env_path := os.environ.get("MIWAN_CONFIG"):
         explicit = Path(env_path)
         if not explicit.is_file():
-            raise SystemExit(f"KEEPER_CONFIG 指定的配置文件不存在：{explicit}")
+            raise SystemExit(f"MIWAN_CONFIG 指定的配置文件不存在：{explicit}")
     else:
         explicit = None
 
@@ -332,18 +335,18 @@ def load_config(path: str | Path | None = None) -> Config:
     port = _as_int(server.get("port", 8765), "[server] port")
     data_dir = _as_dir(storage.get("data_dir", "data"))
 
-    env_host = os.environ.get("KEEPER_HOST")
+    env_host = os.environ.get("MIWAN_HOST")
     if env_host:
         host = env_host
-    env_port = os.environ.get("KEEPER_PORT")
+    env_port = os.environ.get("MIWAN_PORT")
     if env_port:
-        port = _as_int(env_port, "KEEPER_PORT")
-    env_data = os.environ.get("KEEPER_DATA_DIR")
+        port = _as_int(env_port, "MIWAN_PORT")
+    env_data = os.environ.get("MIWAN_DATA_DIR")
     if env_data:
         data_dir = _as_dir(env_data)
 
     public_url = str(server.get("public_url", "")).strip().rstrip("/")
-    env_public = os.environ.get("KEEPER_PUBLIC_URL", "").strip()
+    env_public = os.environ.get("MIWAN_PUBLIC_URL", "").strip()
     if env_public:
         public_url = env_public.rstrip("/")
 
@@ -365,7 +368,7 @@ def load_config(path: str | Path | None = None) -> Config:
 
     notify_channel = str(notify.get("channel", "serverchan")).strip() or "serverchan"
 
-    env_token = os.environ.get("KEEPER_TOKEN", "").strip()
+    env_token = os.environ.get("MIWAN_TOKEN", "").strip()
     token_override = str(auth.get("token", "") or "").strip() or env_token
     if token_override:
         # 覆盖了自动生成的 token 也要把数据目录建出来——Store 落库假定它存在

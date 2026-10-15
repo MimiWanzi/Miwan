@@ -91,7 +91,7 @@ async def mcp_endpoint(request: web.Request) -> web.Response:
                 "protocolVersion": body.get("params", {}).get("protocolVersion")
                 or "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "keeper-permissions", "version": "0.1.0"},
+                "serverInfo": {"name": "miwan-permissions", "version": "0.1.0"},
             },
         )
 

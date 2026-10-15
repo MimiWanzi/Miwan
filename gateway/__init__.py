@@ -1,4 +1,4 @@
-"""Keeper · Local Agent Gateway
+"""Miwan · Local Agent Gateway
 
 本地组件，跑在用户自己的电脑上，负责发现 Agent、管理项目与会话、
 执行任务、采集事件流，并把这一切暴露给手机端。

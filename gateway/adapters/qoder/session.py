@@ -164,7 +164,7 @@ class QoderSession(AgentSession):
         """把审批通道写成临时 MCP 配置（同 Claude 的做法与理由）。"""
         if self._mcp_config_path is not None:
             self._mcp_config_path.unlink(missing_ok=True)
-        fd, raw = tempfile.mkstemp(prefix="keeper-mcp-", suffix=".json")
+        fd, raw = tempfile.mkstemp(prefix="miwan-mcp-", suffix=".json")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(
                 {"mcpServers": {"perm": {"type": "http", "url": self._prompt_url}}},

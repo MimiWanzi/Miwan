@@ -1,4 +1,4 @@
-/* Keeper — 第 5 层前端（原生 ES 模块，无构建步骤）
+/* Miwan — 第 5 层前端（原生 ES 模块，无构建步骤）
  *
  * 三条约束决定了这里几乎所有写法：
  *
@@ -1256,7 +1256,7 @@ function buildOnboardingCard(agentsPayload, me) {
 }
 
 async function viewProjects() {
-  setTitle("Keeper");
+  setTitle("Miwan");
   setBack(null);
 
   const view = $("#view");
