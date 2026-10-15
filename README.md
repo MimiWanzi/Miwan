@@ -115,7 +115,7 @@ OpenCode 不是必须的。要接入时：PATH 上有 `opencode` 就自动识别
 
 ```toml
 [opencode]
-command = ["C:/Users/game/.bun/bin/bun.exe", "run", "--cwd", "D:/PythonProjects/opencode/packages/opencode", "src/index.ts"]
+command = ["C:/Users/<你>/.bun/bin/bun.exe", "run", "--cwd", "D:/path/to/opencode/packages/opencode", "src/index.ts"]
 ```
 
 ```bash
@@ -322,7 +322,7 @@ OpenCode 的后端同样是用户自配的 DeepSeek（`~/.config/opencode/openco
 
 **候选的下一层：**
 
-- [ ] **Git 集成**：在项目页只读展示 `status` / `diff` / `log`（原型书 Phase 9）
+- [ ] **Git 集成**：在项目页只读展示 `status` / `diff` / `log`
 - [ ] **并发与任务队列**：多任务排队、每项目并发上限、成本上限（`--max-budget-usd` 已探明可用）
 - [x] **接入第二个 Agent**：OpenCode 已接入（serve + v1 HTTP + SSE，含端到端验证），
       抽象层没有因此改动核心——"新增 Agent = 新增子包 + 注册"成立。
@@ -353,7 +353,6 @@ RemoteAgent/
 │   ├── security-notes.md            凭证模型与已知限制
 │   └── adapter-extension-notes.md   接新 Agent 之前必读
 └── （运行时数据不在仓库里：%LOCALAPPDATA%\RemoteAgent\data\，token 与 SQLite 库都在这）
-└── RemoteAgent项目原型书.md          产品设计文档
 ```
 
 前端是**零依赖、无构建**的：三个静态文件，改完刷新浏览器就是。这样手机端不需要
@@ -378,9 +377,6 @@ RemoteAgent/
 | `docs/roadmap.md` | 接下来建设什么（按代码现状标注各阶段完成度） |
 | `docs/architecture.md` | 系统为什么这么设计、模块如何协作、术语约定 |
 | `docs/product.md` | 产品定位：用户是谁、解决什么问题、怎么演进 |
-| `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
-| `docs/adapter-extension-notes.md` | 接新 Agent 之前必读：各家协议差异与实测结论 |
-| `RemoteAgent项目原型书.md` | 早期产品设计：目标、能力模型、演进阶段（历史文档） |
 | `docs/security-notes.md` | 两套凭证怎么设计的、哪里还敞着、以及踩过的坑 |
 | `docs/adapter-extension-notes.md` | 接新 Agent 之前必读：各家协议差异与实测结论 |
 
