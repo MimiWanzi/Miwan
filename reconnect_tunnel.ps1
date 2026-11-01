@@ -93,7 +93,11 @@ foreach ($attempt in 1..3) {
     foreach ($i in 1..10) {
         Start-Sleep 2
         $txt = Get-Content $ErrLog -Raw -ErrorAction SilentlyContinue
-        if ($txt -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+        # (?![/\w])：注册失败时 cloudflared 会把它的注册端点
+        # "Post "https://api.trycloudflare.com/tunnel"" 写进报错文本——
+        # 不加这个负向断言，正则会把端点误当隧道网址写进 config，
+        # 二维码指向别人的服务（2026-10-27 真实故障：扫码拿到 10005 JSON）
+        if ($txt -match "https://[a-z0-9-]+\.trycloudflare\.com(?![/\w])") { $url = $Matches[0]; break }
     }
     if ($url) { break }
     Write-Host "    没起来，重试..."
@@ -155,7 +159,14 @@ try {
     Invoke-RestMethod "$url/api/health" -TimeoutSec 15 | Out-Null
     Write-Host "公网穿透：已打通" -ForegroundColor Green
 } catch {
-    Write-Host "公网穿透还没通（Cloudflare 生效要几秒），稍等刷新即可" -ForegroundColor Yellow
+    # 隧道进程活着 = Cloudflare 边缘生效慢；进程死了 = 注册根本没成功，等也没用
+    if (Get-Process cloudflared -ErrorAction SilentlyContinue) {
+        Write-Host "公网穿透还没通（Cloudflare 生效要几秒），稍等刷新即可" -ForegroundColor Yellow
+    } else {
+        Write-Host "隧道进程已退出——公网地址没起来，重新双击重试" -ForegroundColor Red
+        if (-not $env:RA_NOPAUSE) { Read-Host "按回车关闭" }
+        exit 1
+    }
 }
 Write-Host ""
 Write-Host "  电脑上：刷新监控台页面，右侧二维码已是新网址"
