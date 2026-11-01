@@ -113,11 +113,16 @@ class TaskRunner:
         autonomy: AutonomyPolicy = DEFAULT_AUTONOMY,
         resume_from: str | None = None,
         session_id: str | None = None,
+        group_id: str | None = None,
     ) -> Task:
         """建好任务并**立即返回**，不阻塞到任务结束。
 
         这是"手机下完命令马上能走"的前提，也是断线恢复的前提：
         如果 submit 一直阻塞到任务跑完，客户端一断线就什么都拿不到了。
+
+        ``group_id`` 标记"这个任务是哪个群派出来的"——群时间线靠它把
+        成员产出灌回去，协调循环靠它等自己派的单。它不改变任务本身的
+        任何执行路径：权限、绊线、事件流与普通任务完全一致。
         """
         if agent_id is None:
             # 续接必须回到会话原本的 Agent：拿 OpenCode 的会话 id 去喂 Claude
@@ -148,6 +153,7 @@ class TaskRunner:
             prompt=prompt,
             status=TaskStatus.CREATED,
             created_at=time.time(),
+            group_id=group_id,
         )
         self.store.create_task(task)
 

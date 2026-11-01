@@ -26,6 +26,7 @@ from aiohttp import web
 from .adapters import AutonomyPolicy, detect_all, get, BlockFilter
 from .auth import PairingRejected, set_token_cookie
 from .context import get_ctx, get_device
+from .group import GroupError, resolve_mentions
 from .models import TERMINAL_STATUSES
 from .notify import CHANNELS, NotifySettings
 from .runner import RunnerError, UnknownProject
@@ -658,6 +659,170 @@ async def cancel_task(request: web.Request) -> web.Response:
         return json_error("该任务不在本进程里运行（来自上次启动），无法中断", 409)
 
     return json_response({"cancelled": True, "task_id": task_id})
+
+
+# ----------------------------------------------------------------------
+# 群聊（多智能体协同）
+# ----------------------------------------------------------------------
+
+
+@routes.post("/api/projects/{project_id}/groups")
+async def create_group(request: web.Request) -> web.Response:
+    """建一个群。成员是 agent id 清单，注册表里没有的当场 400——
+    不能让群里安静地少一个人。"""
+    ctx = get_ctx(request)
+    project_id = request.match_info["project_id"]
+    body = await _body(request)
+    if body is None:
+        return json_error("请求体必须是 JSON 对象", 400)
+    title = str(body.get("title") or "")
+    members = body.get("members")
+    if not isinstance(members, list):
+        return json_error("members 必须是 agent id 数组", 400)
+
+    try:
+        group = ctx.groups.create_group(
+            project_id=project_id, title=title, members=members
+        )
+    except UnknownProject as exc:
+        return json_error(str(exc), 404)
+    except GroupError as exc:
+        return json_error(str(exc), 400)
+    return json_response({"group": _dump(group)}, status=201)
+
+
+@routes.get("/api/projects/{project_id}/groups")
+async def list_groups(request: web.Request) -> web.Response:
+    ctx = get_ctx(request)
+    project_id = request.match_info["project_id"]
+    if ctx.store.get_project(project_id) is None:
+        return json_error(f"没有这个项目：{project_id}", 404)
+    groups = ctx.store.list_groups(project_id)
+    return json_response({"groups": [_dump(g) for g in groups]})
+
+
+@routes.get("/api/groups/{group_id}")
+async def group_detail(request: web.Request) -> web.Response:
+    ctx = get_ctx(request)
+    group_id = request.match_info["group_id"]
+    group = ctx.store.get_group(group_id)
+    if group is None:
+        return json_error(f"没有这个群：{group_id}", 404)
+
+    tasks = ctx.store.tasks_for_group(group_id)
+    return json_response(
+        {
+            "group": _dump(group),
+            "tasks": [_dump(t) for t in tasks],
+            # 前端进场就要知道这个群有没有"队长"——等用户发了消息
+            # 才发现大脑没配，体验上就晚了一步
+            "coordinator": ctx.coordinator is not None,
+        }
+    )
+
+
+@routes.get("/api/groups/{group_id}/events")
+async def group_events(request: web.Request) -> web.Response:
+    """群时间线按 seq 取事件。**这就是断线补发本身**——
+    与任务事件同一套约定：轮询 ``?since=N`` 与实时推送看到完全一致的序列。"""
+    ctx = get_ctx(request)
+    group_id = request.match_info["group_id"]
+    if ctx.store.get_group(group_id) is None:
+        return json_error(f"没有这个群：{group_id}", 404)
+
+    since = _int_param(request, "since", 0, 0, 2**62)
+    limit = _int_param(request, "limit", DEFAULT_EVENT_LIMIT, 1, MAX_EVENT_LIMIT)
+    # tail 是进场模式：只取最后 N 条（老群的时间线会一直长，从 0 拉全量
+    # 越来越重），last_seq 从尾部续起，之后的增量照走 since。
+    tail = _int_param(request, "tail", 0, 0, MAX_EVENT_LIMIT)
+    if tail:
+        events = ctx.store.events_for_group_tail(group_id, tail)
+    else:
+        events = ctx.store.events_for_group(group_id, since, limit=limit)
+
+    return json_response(
+        {
+            "events": [_dump(e) for e in events],
+            "last_seq": events[-1].seq if events else since,
+            "has_more": len(events) == limit,
+        }
+    )
+
+
+@routes.post("/api/groups/{group_id}/messages")
+async def post_group_message(request: web.Request) -> web.Response:
+    """往群里发一条用户消息。落库即返回；后面的动作分两路：
+
+    - **@点名**（@某成员 / @全体成员）：被点到的成员**直接并行开工**——
+      网关当场把单派出去，不走队长。点名即派单是群里最快的路径，
+      队长（协调器）保持沉默，正如真人群里被点名的活不需要领导转手。
+    - **无 @**：唤醒协调循环（第 2 层），由队长安排。
+
+    群已关闭是 409 不是 400：群存在、请求也合法，只是状态不允许——
+    前端据此把输入框收起来，而不是报"你写错了"。
+    """
+    ctx = get_ctx(request)
+    group_id = request.match_info["group_id"]
+    group = ctx.store.get_group(group_id)
+    if group is None:
+        return json_error(f"没有这个群：{group_id}", 404)
+
+    body = await _body(request)
+    if body is None:
+        return json_error("请求体必须是 JSON 对象", 400)
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return json_error("text 不能为空", 400)
+
+    try:
+        event = ctx.groups.post_user_message(group_id, text)
+    except GroupError as exc:
+        return json_error(str(exc), 409)
+
+    # ---- @路由：被点名的成员直接并行派单（fire-and-forget，与队长同链路）----
+    # 任务带同一个 group_id，产出照常由 GroupTaskWatcher 灌回时间线；
+    # 派单卡留着当"受理回执"——真实 Agent 跑起来要几十秒，群里得先有动静。
+    # autonomy 与协调器同源（config.default_autonomy），不因路径不同而放权。
+    dispatched: list[str] = []
+    mentioned = resolve_mentions(text, list(group.members))
+    if mentioned:
+        prompt = (
+            f"你在群聊「{group.title}」中被用户 @，用户的原话：\n\n{text}\n\n"
+            "请直接回应用户；你的输出会贴回群里给大家看，简明扼要。"
+        )
+        for agent_id in mentioned:
+            try:
+                task = ctx.runner.submit(
+                    project_id=group.project_id,
+                    prompt=prompt,
+                    agent_id=agent_id,
+                    autonomy=ctx.config.default_autonomy,
+                    group_id=group.id,
+                )
+            except (RunnerError, UnknownAgent) as exc:
+                ctx.groups.post_system_message(group_id, f"叫醒 {agent_id} 失败：{exc}")
+                continue
+            ctx.groups.post_dispatch(group.id, task.id, agent_id, prompt, by="user")
+            dispatched.append(agent_id)
+
+    # ---- 无 @（或全部叫醒失败）才走队长：落库之后才 wake，顺序要求同前 ----
+    # wake 立即返回（循环在后台跑），这个 handler 不能被一次 LLM 调用拖住——
+    # 手机发条消息等 30 秒才转圈结束，没有人会认为它是正常的。
+    #
+    # 两个标志分开："coordinator" 是大脑配没配（没配要 toast 告诉用户去配置），
+    # "woken" 是这次有没有真的排上循环。群已经在协调中时 woken=False
+    # 但消息**不会丢**——运行中的循环每轮都从库里摘新动态，自然看到这句。
+    woken = False
+    if not dispatched and ctx.coordinator is not None:
+        woken = ctx.coordinator.wake(group_id)
+    return json_response(
+        {
+            "event": _dump(event),
+            "coordinator": ctx.coordinator is not None,
+            "woken": woken,
+            "dispatched": dispatched,
+        }
+    )
 
 
 # ----------------------------------------------------------------------

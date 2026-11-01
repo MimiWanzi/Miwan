@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from .events import Event, EventType
-from .models import Project, Session, Task, TaskStatus, normalize_path, stable_id
+from .models import Group, GroupStatus, Project, Session, Task, TaskStatus, normalize_path, stable_id
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     finished_at       REAL,
     exit_reason       TEXT,
     error             TEXT,
-    cost_usd          REAL
+    cost_usd          REAL,
+    group_id          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status  ON tasks(status);
@@ -65,9 +66,20 @@ CREATE TABLE IF NOT EXISTS events (
     task_id TEXT NOT NULL,
     ts      REAL NOT NULL,
     type    TEXT NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    group_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
+
+CREATE TABLE IF NOT EXISTS groups (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    title      TEXT NOT NULL,
+    members    TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_groups_project ON groups(project_id);
 
 CREATE TABLE IF NOT EXISTS permissions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +115,8 @@ CREATE TABLE IF NOT EXISTS devices (
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "projects": {"manual": "INTEGER NOT NULL DEFAULT 0"},
     "sessions": {"agent_id": "TEXT"},
-    "tasks": {"agent_id": "TEXT", "native_session_id": "TEXT"},
+    "tasks": {"agent_id": "TEXT", "native_session_id": "TEXT", "group_id": "TEXT"},
+    "events": {"group_id": "TEXT"},
 }
 
 
@@ -141,6 +154,13 @@ class Store:
                     self._conn.execute(
                         f"ALTER TABLE {table} ADD COLUMN {name} {decl}"
                     )
+        # 群时间线的查询是 `WHERE group_id = ? AND seq > ?`，轮询每次都打，
+        # 必须有索引。放进本方法而不是 SCHEMA：已有库在 executescript 时
+        # 还没有 group_id 列，索引会建在"不存在的列"上直接报错——
+        # 列补齐之后再建，CREATE INDEX IF NOT EXISTS 对新库旧库都幂等。
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_group ON events(group_id, seq)"
+        )
         self._conn.commit()
 
     def close(self) -> None:
@@ -332,8 +352,9 @@ class Store:
             """
             INSERT INTO tasks
                 (id, project_id, agent_id, session_id, native_session_id, prompt,
-                 status, created_at, started_at, finished_at, exit_reason, error, cost_usd)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, created_at, started_at, finished_at, exit_reason, error, cost_usd,
+                 group_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.id,
@@ -349,6 +370,7 @@ class Store:
                 task.exit_reason,
                 task.error,
                 task.cost_usd,
+                task.group_id,
             ),
         )
         self._conn.commit()
@@ -405,12 +427,13 @@ class Store:
         补发/回放能力由此免费获得，不需要额外设计。
         """
         cursor = self._conn.execute(
-            "INSERT INTO events (task_id, ts, type, payload) VALUES (?, ?, ?, ?)",
+            "INSERT INTO events (task_id, ts, type, payload, group_id) VALUES (?, ?, ?, ?, ?)",
             (
                 event.task_id,
                 event.ts,
                 event.type.value,
                 json.dumps(event.payload, ensure_ascii=False),
+                event.group_id,
             ),
         )
         self._conn.commit()
@@ -454,6 +477,163 @@ class Store:
             (task_id, EventType.TASK_COMPLETED.value, EventType.TASK_FAILED.value),
         ).fetchone()
         return row is not None
+
+    def last_assistant_text(self, task_id: str) -> str | None:
+        """任务最后一条 assistant_text 的正文。
+
+        任务终态事件的 payload **不带结果文本**（Claude 家族的 result 里只有
+        reason/cost/duration，见 ``anthropic_stream.outcome``），Agent 的最终
+        回答只存在于事件流里——群聊把成员产出灌回时间线时从这取。
+        没有正文（比如任务起都没起来）返回 None，调用方如实降级。
+        """
+        row = self._conn.execute(
+            """
+            SELECT payload FROM events
+            WHERE task_id = ? AND type = ?
+            ORDER BY seq DESC
+            LIMIT 1
+            """,
+            (task_id, EventType.ASSISTANT_TEXT.value),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return str(json.loads(row["payload"]).get("text")) or None
+        except (TypeError, ValueError):
+            return None
+
+    def events_for_group(
+        self, group_id: str, since_seq: int = 0, limit: int = 1000
+    ) -> list[Event]:
+        """取某个群 seq 之后的事件——群时间线的轮询与（将来的）WS 补发同源。
+
+        与 :meth:`events_since` 平行的一条查询：任务事件按 task_id 走，
+        群消息按 group_id 走，互不混流（一条事件不该两头都挂，
+        ``Event.group_id`` 的注释里写了为什么）。
+        """
+        rows = self._conn.execute(
+            """
+            SELECT * FROM events
+            WHERE group_id = ? AND seq > ?
+            ORDER BY seq
+            LIMIT ?
+            """,
+            (group_id, since_seq, limit),
+        ).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def events_for_group_tail(self, group_id: str, limit: int = 80) -> list[Event]:
+        """群的**最后** N 条事件，最旧的在前。
+
+        群的生命周期比任务长得多，时间线会一直长——从 seq 0 拉全量的话，
+        老群的进场请求会越来越重，而用户要看的只是最近那几条。
+        聊天窗口进场取尾部、之后靠 ``?since=N`` 增量，与
+        ``viewSession`` 只显示最近 80 条消息是同一个取舍。
+        """
+        rows = self._conn.execute(
+            """
+            SELECT * FROM (
+                SELECT * FROM events WHERE group_id = ?
+                ORDER BY seq DESC LIMIT ?
+            ) ORDER BY seq
+            """,
+            (group_id, limit),
+        ).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def group_last_seq(self, group_id: str) -> int:
+        """群时间线当前最大的 seq，没有消息的群返回 0（seq 从 1 起）。
+
+        协调循环的摘要游标从这起算：唤醒时刻之后的群内新动态才进
+        上下文，唤醒前的已在初始历史里，不重复喂两遍。
+        """
+        row = self._conn.execute(
+            "SELECT MAX(seq) AS s FROM events WHERE group_id = ?", (group_id,)
+        ).fetchone()
+        return int(row["s"]) if row and row["s"] is not None else 0
+
+    # ------------------------------------------------------------------
+    # Group（多智能体群聊）
+    # ------------------------------------------------------------------
+
+    def create_group(self, group: Group) -> Group:
+        self._conn.execute(
+            """
+            INSERT INTO groups (id, project_id, title, members, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                group.id,
+                group.project_id,
+                group.title,
+                json.dumps(group.members, ensure_ascii=False),
+                group.status.value,
+                group.created_at or time.time(),
+            ),
+        )
+        self._conn.commit()
+        return group
+
+    def get_group(self, group_id: str) -> Group | None:
+        row = self._conn.execute(
+            "SELECT * FROM groups WHERE id = ?", (group_id,)
+        ).fetchone()
+        return self._row_to_group(row) if row else None
+
+    def list_groups(self, project_id: str) -> list[Group]:
+        rows = self._conn.execute(
+            "SELECT * FROM groups WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ).fetchall()
+        return [self._row_to_group(r) for r in rows]
+
+    def all_groups(self) -> list[Group]:
+        """全部群，不限项目。只有网关启动时的恢复扫描用（ACTIVE → IDLE），
+        常规列表一律走 :meth:`list_groups` 按项目取。"""
+        rows = self._conn.execute(
+            "SELECT * FROM groups ORDER BY created_at DESC"
+        ).fetchall()
+        return [self._row_to_group(r) for r in rows]
+
+    def update_group(self, group_id: str, **fields) -> None:
+        """按关键字更新群字段。status 传 GroupStatus 或字符串均可。"""
+        if not fields:
+            return
+        if "status" in fields and isinstance(fields["status"], GroupStatus):
+            fields["status"] = fields["status"].value
+        if "members" in fields and isinstance(fields["members"], list):
+            fields["members"] = json.dumps(fields["members"], ensure_ascii=False)
+        columns = ", ".join(f"{key} = ?" for key in fields)
+        self._conn.execute(
+            f"UPDATE groups SET {columns} WHERE id = ?",
+            (*fields.values(), group_id),
+        )
+        self._conn.commit()
+
+    def tasks_for_group(self, group_id: str) -> list[Task]:
+        """派进这个群的任务，按创建顺序——群页的「本群任务」列表用。"""
+        rows = self._conn.execute(
+            "SELECT * FROM tasks WHERE group_id = ? ORDER BY created_at",
+            (group_id,),
+        ).fetchall()
+        return [self._row_to_task(r) for r in rows]
+
+    @staticmethod
+    def _row_to_group(row: sqlite3.Row) -> Group:
+        try:
+            members = json.loads(row["members"])
+        except (TypeError, ValueError):
+            members = []
+        if not isinstance(members, list):
+            members = []
+        return Group(
+            id=row["id"],
+            project_id=row["project_id"],
+            title=row["title"],
+            members=[str(m) for m in members],
+            status=GroupStatus(row["status"]),
+            created_at=row["created_at"],
+        )
 
     # ------------------------------------------------------------------
     # 设备（第 7 层）
@@ -591,6 +771,7 @@ class Store:
             exit_reason=row["exit_reason"],
             error=row["error"],
             cost_usd=row["cost_usd"],
+            group_id=row["group_id"] if "group_id" in row.keys() else None,
         )
 
     @staticmethod
@@ -601,6 +782,7 @@ class Store:
             type=EventType(row["type"]),
             ts=row["ts"],
             payload=json.loads(row["payload"]),
+            group_id=row["group_id"] if "group_id" in row.keys() else None,
         )
 
 

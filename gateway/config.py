@@ -105,6 +105,7 @@ _KNOWN_KEYS: dict[str, set[str]] = {
     "codex": {"command"},
     "qoder": {"command"},
     "notify": {"enabled", "channel", "key", "webhook_url"},
+    "group": {"base_url", "api_key", "model", "max_turns"},
 }
 
 
@@ -143,6 +144,14 @@ class Config:
     notify_channel: str = "serverchan"
     notify_key: str = ""
     notify_webhook_url: str = ""
+    #: 群聊协调大脑（OpenAI 兼容的 chat completions 端点）。api_key 为空 =
+    #: 协调器不可用：群聊仍然能建、能说话、能看时间线，只是没有"队长"，
+    #: 群页会如实提示。不设 enabled 开关——key 有没有配本身就是开关，
+    #: 两个键表达一个状态迟早会打架。
+    group_base_url: str = "https://api.deepseek.com"
+    group_api_key: str = ""
+    group_model: str = "deepseek-chat"
+    group_max_turns: int = 30
     blocked_paths: tuple[Path, ...] = ()
     #: 配置从哪个文件读来的；None = 没有配置文件，全默认。
     #: info 和启动横幅会显示它——"我改的 config.toml 生效了吗"看一眼就有答案。
@@ -330,6 +339,7 @@ def load_config(path: str | Path | None = None) -> Config:
     codex = section("codex")
     qoder = section("qoder")
     notify = section("notify")
+    group = section("group")
 
     host = str(server.get("host", "0.0.0.0"))
     port = _as_int(server.get("port", 8765), "[server] port")
@@ -368,6 +378,13 @@ def load_config(path: str | Path | None = None) -> Config:
 
     notify_channel = str(notify.get("channel", "serverchan")).strip() or "serverchan"
 
+    group_base_url = str(group.get("base_url", "https://api.deepseek.com")).strip().rstrip("/")
+    group_api_key = str(group.get("api_key", "") or "").strip()
+    group_model = str(group.get("model", "deepseek-chat")).strip() or "deepseek-chat"
+    group_max_turns = _as_int(group.get("max_turns", 30), "[group] max_turns")
+    if group_max_turns < 1:
+        raise SystemExit("[group] max_turns 至少为 1")
+
     env_token = os.environ.get("MIWAN_TOKEN", "").strip()
     token_override = str(auth.get("token", "") or "").strip() or env_token
     if token_override:
@@ -394,6 +411,10 @@ def load_config(path: str | Path | None = None) -> Config:
         notify_channel=notify_channel,
         notify_key=str(notify.get("key", "") or ""),
         notify_webhook_url=str(notify.get("webhook_url", "") or ""),
+        group_base_url=group_base_url,
+        group_api_key=group_api_key,
+        group_model=group_model,
+        group_max_turns=group_max_turns,
         blocked_paths=load_blocked_paths(data_dir),
         source=source,
     ))

@@ -1,6 +1,8 @@
 """核心实体模型。
 
 实体关系：Project → Session → Task → Event
+群（Group）是另一种容器：它挂在 Project 下，把多个 Agent 的任务与一条
+聊天时间线装在一起，事件仍走统一的 Event 流。
 """
 
 from __future__ import annotations
@@ -125,3 +127,36 @@ class Task(BaseModel):
     exit_reason: str | None = None
     error: str | None = None
     cost_usd: float | None = None
+    group_id: str | None = None
+    """派进哪个群。None = 普通的单人任务，与群无关。"""
+
+
+class GroupStatus(str, Enum):
+    """群的状态机。
+
+    idle → active → idle 可往复（协调循环在跑 = active）；
+    closed 是终态，进去了群就只读。
+    """
+
+    IDLE = "idle"
+    """等人说话。协调循环没在跑。"""
+
+    ACTIVE = "active"
+    """协调循环在跑（派单、等结果、回话）。"""
+
+    CLOSED = "closed"
+
+
+class Group(BaseModel):
+    """一个多智能体群聊。
+
+    成员是 agent_id 列表——含义由 Adapter 注册表解释，这里不认识
+    任何具体 Agent（CLAUDE.md 规则 10）。同一个 agent 只出现一次。
+    """
+
+    id: str
+    project_id: str
+    title: str
+    members: list[str] = Field(default_factory=list)
+    status: GroupStatus = GroupStatus.IDLE
+    created_at: float = Field(default_factory=lambda: 0.0)

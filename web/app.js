@@ -106,6 +106,18 @@ function primeAgentLabels(payload) {
 }
 const agentLabel = (id) => agentLabels[id] || id || "";
 
+// 成员色卡：群聊气泡的边框与署名圆点按成员着色——像真人群聊一样，
+// 不用读名字，扫一眼颜色就知道谁在说话。没登记的 id 按哈希从色盘里挑。
+const agentColors = { claude_code: "#f59e0b", codex: "#38bdf8", opencode: "#a78bfa", qoder: "#34d399", workbuddy: "#f472b6" };
+const CAPTAIN_COLOR = "#7aa2f7"; // 队长（协调器）的署名色，与界面 accent 同源
+const agentPalette = Object.values(agentColors);
+function agentColorOf(id) {
+  if (agentColors[id]) return agentColors[id];
+  let h = 0;
+  for (const ch of String(id || "?")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return agentPalette[h % agentPalette.length];
+}
+
 function statusPill(status) {
   const s = STATUS[status] || { label: status || "?", cls: "" };
   return el("span", { class: `pill ${s.cls}`.trim(), text: s.label });
@@ -598,6 +610,7 @@ async function route() {
       await viewSession(decodeURIComponent(parts[1]), decodeURIComponent(parts[3]));
     else if (parts[0] === "p" && parts[1]) await viewProject(decodeURIComponent(parts[1]));
     else if (parts[0] === "t" && parts[1]) await viewTask(decodeURIComponent(parts[1]));
+    else if (parts[0] === "g" && parts[1]) await viewGroup(decodeURIComponent(parts[1]));
     else await viewProjects();
   } catch (err) {
     // 凭证问题不是错误页能解决的事，直接送去配对界面。
@@ -1353,9 +1366,10 @@ async function viewProjects() {
 
 async function viewProject(projectId) {
   const view = $("#view");
-  const [data, agentsPayload] = await Promise.all([
+  const [data, agentsPayload, groupsPayload] = await Promise.all([
     api(`/api/projects/${encodeURIComponent(projectId)}`),
     api("/api/agents").catch(() => ({ agents: [], defaults: {} })),
+    api(`/api/projects/${encodeURIComponent(projectId)}/groups`).catch(() => ({ groups: [] })),
   ]);
   const { project, sessions } = data;
   const ready = agentsPayload.agents.filter((a) => a.status === "ready");
@@ -1422,6 +1436,54 @@ async function viewProject(projectId) {
   nodes.push(form);
   nodes.push(resumeChip);
 
+  // ---- 群聊 ----
+  const groups = groupsPayload.groups || [];
+  nodes.push(el("div", { class: "section-title", text: `群聊（${groups.length}）` }));
+  for (const g of groups) {
+    const card = el("div", { class: "card" },
+      el("div", { class: "name", text: g.title }),
+      el("div", { class: "sub" },
+        el("span", { text: (g.members || []).map(agentLabel).join("、") || "?" }),
+        g.created_at ? el("span", { text: relTime(g.created_at) }) : null,
+      ),
+    );
+    card.onclick = () => go(`#/g/${encodeURIComponent(g.id)}`);
+    nodes.push(card);
+  }
+  if (ready.length) {
+    const titleInput = el("input", { type: "text", placeholder: "群名称（可留空）" });
+    const checks = ready.map((a) => {
+      const box = el("input", { type: "checkbox", value: a.id });
+      return { box, row: el("label", { class: "check-row" }, box, el("span", { text: a.name })) };
+    });
+    const createBtn = el("button", { class: "primary", text: "建群" });
+    const groupForm = el("form", { class: "new-task" },
+      titleInput,
+      ...checks.map((c) => c.row),
+      createBtn,
+      el("p", { class: "hint", text: "群聊把多个 Agent 装进同一个对话：在群里说话，由协调器拆活派给成员，产出汇总回群里。" }),
+    );
+    groupForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const members = checks.filter((c) => c.box.checked).map((c) => c.box.value);
+      if (!members.length) { toast("至少勾选一个群成员"); return; }
+      createBtn.disabled = true;
+      createBtn.textContent = "建群中…";
+      try {
+        const { group } = await postJSON(
+          `/api/projects/${encodeURIComponent(project.id)}/groups`,
+          { title: titleInput.value.trim(), members },
+        );
+        go(`#/g/${encodeURIComponent(group.id)}`);
+      } catch (err) {
+        failure(err);
+        createBtn.disabled = false;
+        createBtn.textContent = "建群";
+      }
+    };
+    nodes.push(groupForm);
+  }
+
   // ---- 历史会话 ----
   nodes.push(el("div", { class: "section-title", text: `历史会话（${sessions.length}）` }));
   if (!sessions.length) {
@@ -1479,6 +1541,232 @@ async function viewProject(projectId) {
   }
 
   view.replaceChildren(...nodes);
+}
+
+// ----------------------------------------------------------------------
+// 视图：群聊（多智能体协同）
+// ----------------------------------------------------------------------
+
+/** 群时间线的一条消息 → DOM。kind 词表见 ``gateway/group.py``，
+ * 两头共用这一份约定：没见过的 kind 按系统行渲染，不会白屏。
+ *
+ * 返回 null 表示调用方已经自行处理（占位消息被替换）。
+ */
+function renderGroupEvent(ev) {
+  const p = ev.payload || {};
+  const agentName = (id) => agentLabel(id) || id || "?";
+
+  // 左侧气泡：群里别人说的。署名（色点 + 名字 + 时间）挂在气泡**下方**，
+  // 像 Kimi 群聊那样——气泡本体只装话，签名行负责"这是谁在说"。
+  const bubble = (who, text, taskId, color) => {
+    const row = el("div", { class: "gc-row" });
+    const col = el("div", { class: "gc-col" });
+    const box = el("div", { class: "gc-bubble" });
+    if (color) box.style.borderColor = color + "55";
+    for (const child of textBlock(text).children) box.append(child);
+    if (taskId) {
+      box.classList.add("linkish");
+      box.onclick = () => go(`#/t/${encodeURIComponent(taskId)}`);
+    }
+    col.append(box);
+    if (who) {
+      const sig = el("div", { class: "gc-sig" });
+      if (color) sig.append(el("i", { class: "gc-dot", style: `background:${color}` }));
+      sig.append(document.createTextNode(who));
+      col.append(sig);
+    }
+    row.append(col);
+    return row;
+  };
+
+  switch (p.kind) {
+    case "user": {
+      // 自己的话靠右。签名行只留"你 · 时间"，右侧本来就只有你
+      const row = el("div", { class: "gc-row me" });
+      const col = el("div", { class: "gc-col" });
+      const box = el("div", { class: "gc-bubble" });
+      for (const child of textBlock(p.text || "").children) box.append(child);
+      col.append(box);
+      col.append(el("div", { class: "gc-sig", text: `你 · ${clockTime(ev.ts)}` }));
+      row.append(col);
+      return row;
+    }
+    case "coordinator":
+      return bubble(`队长 · ${clockTime(ev.ts)}`, p.text || "", null, CAPTAIN_COLOR);
+    case "agent_result": {
+      // 成员的真实产出就是成员在群里说话；只有没跑成的才标注，
+      // 完成的再挂个"（完成）"是噪音
+      const failed = p.status && p.status !== "completed";
+      const color = agentColorOf(p.agent_id);
+      return bubble(
+        `${agentName(p.agent_id)}${failed ? "（没跑成）" : ""} · ${clockTime(ev.ts)}`,
+        p.text || "（无输出）",
+        p.task_id,
+        color,
+      );
+    }
+    case "dispatch": {
+      // 派单回执：prompt 是给成员的内部指令，不贴出来；这行只回答
+      // "活派出去没"——@点名的单子写"你 叫醒了"，队长编排的写"队长 派单给"
+      const mine = p.by === "user";
+      const line = el("div", {
+        class: "gc-center" + (p.task_id ? " linkish" : ""),
+        text: `${mine ? "你 叫醒了" : "队长 派单给"} ${agentName(p.agent_id)}${p.task_id ? "（点按看任务）" : ""}`,
+      });
+      if (p.task_id) line.onclick = () => go(`#/t/${encodeURIComponent(p.task_id)}`);
+      return line;
+    }
+    default:
+      return el("div", { class: "gc-center", text: p.text || "" });
+  }
+}
+
+/** 群详情：成员、时间线（tail 进场 + since 增量轮询）、输入框。
+ *
+ * 轮询与任务页的 WebSocket 是平级选择：``?since=N`` 得到完全一致的序列
+ * （网关侧同一段查询），群页先用轮询，实时推送等协调器接入后看需要再加。
+ */
+async function viewGroup(groupId) {
+  const view = $("#view");
+  const [detail, agentsPayload] = await Promise.all([
+    api(`/api/groups/${encodeURIComponent(groupId)}`),
+    api("/api/agents").catch(() => ({ agents: [], defaults: {} })),
+  ]);
+  const { group } = detail;
+  primeAgentLabels(agentsPayload);
+
+  setTitle(group.title);
+  setBack(`#/p/${encodeURIComponent(group.project_id)}`);
+
+  const nodes = [];
+
+  // pill 单独留引用：协调中/待发言是会变的状态，轮询里定期刷
+  const statusPillEl = el("span", {
+    class: `pill${group.status === "active" ? " live" : ""}`,
+    text: { idle: "待发言", active: "协调中", closed: "已关闭" }[group.status] || group.status,
+  });
+  nodes.push(el("div", { class: "task-head" },
+    el("div", { class: "prompt", text: `${group.title}（${(group.members || []).length}）` }),
+    el("div", { class: "meta" },
+      el("span", { text: (group.members || []).map(agentLabel).join("、") }),
+      statusPillEl,
+    ),
+  ));
+
+  // ---- 时间线（纯对话：任务不单列区块，成员气泡与派单提示点按即达）----
+  const log = el("div", { class: "stream" });
+  nodes.push(log);
+
+  // ---- 输入框：上方一排快速@（点一下就点名，不用打字）----
+  // @路由在网关侧：被点名的成员**直接并行开工**，不经过队长；
+  // 直接发言才由队长安排。@全体成员 = 全员同时上。
+  const closed = group.status === "closed";
+  const textarea = el("textarea", {
+    placeholder: closed ? "群已关闭" : "在群里说点什么？",
+    rows: 3,
+    disabled: closed,
+  });
+  const send = el("button", { class: "primary", text: "发送", disabled: closed });
+  const composer = el("form", { class: "new-task" });
+  if (!closed && (group.members || []).length) {
+    const atRow = el("div", { class: "gc-at" });
+    for (const m of group.members) {
+      const c = agentColorOf(m);
+      const btn = el("button", {
+        type: "button",
+        class: "gc-at-btn",
+        text: `@${agentLabel(m)}`,
+      });
+      btn.style.color = c;
+      btn.style.borderColor = c + "55";
+      btn.onclick = () => {
+        textarea.value += `@${agentLabel(m)} `;
+        textarea.focus();
+      };
+      atRow.append(btn);
+    }
+    const allBtn = el("button", { type: "button", class: "gc-at-btn gc-at-all", text: "@全体成员" });
+    allBtn.onclick = () => {
+      textarea.value += "@全体成员 ";
+      textarea.focus();
+    };
+    atRow.append(allBtn);
+    composer.append(atRow);
+  }
+  composer.append(textarea);
+  composer.append(el("div", { class: "row" }, send));
+  if (!closed) nodes.push(composer);
+
+  view.replaceChildren(...nodes);
+
+  // ---- 数据：tail 进场，since 增量 ----
+  let lastSeq = 0;
+  {
+    const data = await api(`/api/groups/${encodeURIComponent(groupId)}/events?tail=80`);
+    for (const ev of data.events) log.append(renderGroupEvent(ev));
+    lastSeq = data.last_seq;
+  }
+  view.scrollTop = view.scrollHeight;
+
+  async function poll() {
+    let data;
+    try {
+      data = await api(`/api/groups/${encodeURIComponent(groupId)}/events?since=${lastSeq}`);
+    } catch {
+      return; // 网络抖动就等下一轮，错误页不配打断看群
+    }
+    // 只上屏比游标新的——composer 刚发的那条可能被一个在途 poll 撞见，
+    // 不按 seq 挡一下，同一句话会上屏两次（真机上看就是"回答了两次"）
+    const fresh = data.events.filter((e) => e.seq > lastSeq);
+    if (fresh.length) {
+      for (const ev of fresh) log.append(renderGroupEvent(ev));
+      lastSeq = fresh[fresh.length - 1].seq;
+      if (stick) view.scrollTop = view.scrollHeight;
+    }
+    // 群状态（待发言/协调中）不是事件，得另问详情。每 4 轮（约 10s）刷一次
+    // 就够——状态切换本来就以 LLM 调用的秒级延迟在发生，盯太紧没意义
+    if (++pollCount % 4 === 0) refreshStatus();
+  }
+
+  async function refreshStatus() {
+    try {
+      const d = await api(`/api/groups/${encodeURIComponent(groupId)}`);
+      const labels = { idle: "待发言", active: "协调中", closed: "已关闭" };
+      statusPillEl.textContent = labels[d.group.status] || d.group.status;
+      statusPillEl.className = `pill${d.group.status === "active" ? " live" : ""}`;
+    } catch {
+      // 详情拿不到不影响看时间线，下一轮再试
+    }
+  }
+  let pollCount = 0;
+  const timer = setInterval(poll, 2500);
+  teardown = () => clearInterval(timer);
+
+  composer.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = textarea.value.trim();
+    if (!text) return;
+    send.disabled = true;
+    send.textContent = "发送中…";
+    try {
+      const { event, coordinator } = await postJSON(
+        `/api/groups/${encodeURIComponent(groupId)}/messages`, { text },
+      );
+      textarea.value = "";
+      // 发出的事件立刻上屏，游标跟着推进；poll 侧也按 seq 挡重复（见 poll）
+      log.append(renderGroupEvent(event));
+      lastSeq = Math.max(lastSeq, event.seq);
+      if (stick) view.scrollTop = view.scrollHeight;
+      if (coordinator === false) {
+        toast("未配置协调大脑，消息只做记录不会自动派活");
+      }
+    } catch (err) {
+      failure(err);
+    } finally {
+      send.disabled = false;
+      send.textContent = "发送";
+    }
+  };
 }
 
 // ----------------------------------------------------------------------

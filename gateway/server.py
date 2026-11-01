@@ -40,7 +40,10 @@ from .api import json_response, lan_ip
 from .auth import TOKEN_COOKIE, AuthService, set_token_cookie
 from .config import CONFIG_PATH, Config
 from .context import CTX, DEVICE_KEY, GatewayContext, get_ctx
+from .coordinator import GroupCoordinator, recover_groups
 from .events import EventBus
+from .group import GroupManager, GroupTaskWatcher
+from .llm import LLMClient
 from .notify import Notifier
 from .permissions import load_policy
 from .runner import TaskRunner
@@ -77,8 +80,34 @@ def build_app(config: Config) -> web.Application:
         notifier=notifier,
     )
     auth = AuthService(store, host_token=config.token)
+    groups = GroupManager(store, bus)
+    # 协调大脑是**可选项**：没配 [group] api_key 就不建，群退化为纯时间线
+    # （第 1 层行为照旧）。用"配置缺席"当开关而不是另设一个布尔——
+    # 多一个"填了 key 却忘了开开关"的状态只会制造"明明配了为什么不跑"的误会。
+    coordinator: GroupCoordinator | None = None
+    if config.group_api_key:
+        coordinator = GroupCoordinator(
+            store,
+            groups,
+            runner,
+            LLMClient(
+                base_url=config.group_base_url,
+                api_key=config.group_api_key,
+                model=config.group_model,
+            ),
+            config,
+            notifier=notifier,
+        )
     ctx = GatewayContext(
-        config=config, store=store, bus=bus, runner=runner, auth=auth, notifier=notifier
+        config=config,
+        store=store,
+        bus=bus,
+        runner=runner,
+        auth=auth,
+        groups=groups,
+        group_watcher=GroupTaskWatcher(store, bus, groups),
+        coordinator=coordinator,
+        notifier=notifier,
     )
 
     # 顺序即嵌套顺序：error 在外层，才能把 auth 里抛出的意外也变成 JSON
@@ -306,6 +335,10 @@ _STUB_PAGE = """<!doctype html>
  <tr><td><code>GET</code> <code>/api/tasks/{id}</code></td><td>任务详情</td></tr>
  <tr><td><code>GET</code> <code>/api/tasks/{id}/events</code></td><td>按 seq 取事件（补发）</td></tr>
  <tr><td><code>POST</code> <code>/api/tasks/{id}/cancel</code></td><td>中断</td></tr>
+ <tr><td><code>POST</code> <code>/api/projects/{id}/groups</code></td><td>建群（多智能体）</td></tr>
+ <tr><td><code>GET</code> <code>/api/groups/{id}</code></td><td>群详情</td></tr>
+ <tr><td><code>GET</code> <code>/api/groups/{id}/events</code></td><td>群时间线（<code>?since=</code> / <code>?tail=</code>）</td></tr>
+ <tr><td><code>POST</code> <code>/api/groups/{id}/messages</code></td><td>群里发言</td></tr>
  <tr><td><code>WS</code> <code>/ws?task_id=&amp;since=</code></td><td>实时推送</td></tr>
 </table>
 </body></html>
@@ -326,6 +359,9 @@ async def _index(request: web.Request) -> web.Response:
 
 async def _on_startup(app: web.Application) -> None:
     ctx = app[CTX]
+    # 回灌观察者先上路：它挂在总线上，recover 里若有事件（现在没有）
+    # 和之后的任何任务终态都要有人接
+    ctx.group_watcher.start()
     orphans = ctx.runner.recover()
     if orphans:
         log.warning(
@@ -333,12 +369,22 @@ async def _on_startup(app: web.Application) -> None:
             len(orphans),
             "、".join(t.id for t in orphans),
         )
+    interrupted = recover_groups(ctx.store, ctx.groups)
+    if interrupted:
+        log.warning(
+            "上次启动遗留了 %d 个停在协调中的群，已拨回待命（不会自动续跑，群里说句话可继续）",
+            interrupted,
+        )
 
 
 async def _on_shutdown(app: web.Application) -> None:
+    ctx = app[CTX]
     # 在套接字关掉之前先收任务：否则那些 claude 子进程会变成孤儿，
     # 继续跑、继续烧额度，而手机上看不到任何东西
-    await app[CTX].runner.shutdown()
+    await ctx.runner.shutdown()
+    await ctx.group_watcher.stop()
+    if ctx.coordinator is not None:
+        await ctx.coordinator.shutdown()
 
 
 async def _on_cleanup(app: web.Application) -> None:
@@ -466,6 +512,11 @@ def _print_banner(config: Config, ctx: GatewayContext) -> None:
         f"  配置      {config.source or f'内置默认（{CONFIG_PATH} 不存在）'}",
         f"  数据库    {config.db_path}",
         f"  主机凭证  {config.token_file}（换码：{code_cmd}）",
+        *(  # 群聊大脑是可选件，配了才亮出来——没配的横幅保持和以前一样干净
+            [f"  群聊大脑  {config.group_model} @ {config.group_base_url}"]
+            if ctx.coordinator is not None
+            else []
+        ),
         "",
         f"  配对码不见了就打 `{code_cmd}` 重新要一个。",
         "  Ctrl-C 停止。",

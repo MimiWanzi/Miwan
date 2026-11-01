@@ -15,7 +15,9 @@ from aiohttp import web
 
 from .auth import AuthService
 from .config import Config
+from .coordinator import GroupCoordinator
 from .events import EventBus
+from .group import GroupManager, GroupTaskWatcher
 from .notify import Notifier
 from .runner import TaskRunner
 from .store import Store
@@ -34,8 +36,17 @@ class GatewayContext:
     bus: EventBus
     runner: TaskRunner
     auth: AuthService
+    #: 群聊（多智能体协同）的建群与时间线出口。挂在上下文上的理由同 runner：
+    #: HTTP 层与（第 2 层的）协调循环都要用同一个实例。
+    groups: GroupManager
+    #: 盯总线把群里任务的产出灌回时间线的观察者。常驻（不依赖协调大脑）：
+    #: 就算没配 LLM，成员任务的产出也该出现在群时间线上。
+    group_watcher: GroupTaskWatcher
     #: 微信推送。挂在上下文上（而不是 runner 里）是因为设置页要读改它的设置。
     notifier: Notifier
+    #: 群聊协调大脑。**可空**——没配 [group] api_key 时就是 None，
+    #: 群退化为纯时间线（第 1 层行为），HTTP 层据此决定要不要 wake。
+    coordinator: GroupCoordinator | None = None
 
 
 CTX: web.AppKey[GatewayContext] = web.AppKey("gateway_ctx", GatewayContext)

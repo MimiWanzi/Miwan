@@ -319,6 +319,82 @@ select { padding: 8px 10px; }
 .ev.text .para { white-space: pre-wrap; margin-bottom: 8px; }
 .ev.text .para:last-child { margin-bottom: 0; }
 
+/* 群聊：像真人群聊。气泡靠左/靠右分两侧，署名（色点+名字+时间）挂在
+   气泡下方——气泡只装话，签名行负责"这是谁在说"。成员各有专属色
+   （js 侧 agentColors），边框和圆点同色，扫一眼颜色就认出说话人；
+   派单/系统一类的"手续"收成居中小胶囊，不抢对话。 */
+.gc-row { display: flex; }
+.gc-row.me { justify-content: flex-end; }
+.gc-col {
+  display: flex;
+  flex-direction: column;
+  max-width: 82%;
+  min-width: 0;
+}
+.gc-row.me .gc-col { align-items: flex-end; }
+.gc-bubble {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  padding: 8px 11px;
+  overflow-wrap: anywhere;
+}
+.gc-row.me .gc-bubble {
+  background: #1d2b45;
+  border-color: #2b3a5c;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 4px;
+}
+.gc-sig {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 3px;
+  padding: 0 2px;
+}
+.gc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.gc-bubble.linkish { cursor: pointer; }
+.gc-center {
+  align-self: center;
+  max-width: 88%;
+  text-align: center;
+  font-size: 12px;
+  color: var(--dim);
+  background: rgba(255, 255, 255, .03);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 12px;
+  overflow-wrap: anywhere;
+}
+.gc-center.linkish { cursor: pointer; }
+
+/* 快速@：一排成员色小按钮，点一下往输入框里点名。
+   被点名的成员直接开工（网关侧 @路由），比打字找名字快得多 */
+.gc-at {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.gc-at-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: none;
+  cursor: pointer;
+}
+.gc-at-btn:hover { background: var(--panel-2); }
+.gc-at-all { color: var(--accent); border-color: #2b3a5c; }
+
 pre.code {
   font-family: var(--mono);
   font-size: 12.5px;

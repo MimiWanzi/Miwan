@@ -32,6 +32,13 @@ class EventType(str, Enum):
     前端据此把对应的「等你批准」卡片换成结果。"""
     TASK_COMPLETED = "task_completed"
     TASK_FAILED = "task_failed"
+    GROUP_MESSAGE = "group_message"
+    """群时间线里的一条消息（用户发言 / 协调器发言 / 派单卡 / 任务回灌）。
+
+    它不走 task_id 而走 ``group_id``：群消息不是某个任务的事件，硬塞一个
+    task_id 只会让"按任务取事件"的查询混进与任务无关的东西。
+    payload 的公共形状见 :mod:`gateway.group` 的 KIND_* 常量。
+    """
     RAW = "raw"
     """兜底：Adapter 认不出的原始事件原样透传，保证信息不丢。"""
 
@@ -41,9 +48,16 @@ class Event(BaseModel):
     """持久化后由 store 回填的单调递增序号。事件在总线上流转时仍是 0。"""
 
     task_id: str
+    """所属任务。群消息没有任务，落库时是空串（events.task_id 是 NOT NULL，
+    空串即可表达"不属于任何任务"，不必为它改表约束）。"""
+
     type: EventType
     ts: float = Field(default_factory=time.time)
     payload: dict = Field(default_factory=dict)
+    group_id: str | None = None
+    """所属群。任务事件为 None；群消息必填。一条事件不该同时有 task_id
+    和 group_id——群时间线的查询按 group_id 走，混进任务事件会把
+    工具调用刷屏带进聊天窗口。"""
 
 
 class EventBus:
