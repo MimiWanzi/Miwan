@@ -43,7 +43,7 @@ from pathlib import Path
 from ...events import EventType
 from ...permissions import Policy
 from ..anthropic_stream import Mapper
-from ..base import AgentSession, AutonomyPolicy, EmitFn, RunOutcome
+from ..base import STREAM_LINE_LIMIT, AgentSession, AutonomyPolicy, EmitFn, RunOutcome
 from .locate import clean_env
 
 #: READ_ONLY 档开放的工具。确定性收缩（--tools 直接从工具集里拿走其余）：
@@ -185,6 +185,7 @@ class QoderSession(AgentSession):
             stderr=asyncio.subprocess.PIPE,
             cwd=str(self.cwd),
             env=clean_env(),
+            limit=STREAM_LINE_LIMIT,
         )
         # 会话 id 已用过：之后任何重启都只能走 --resume（同 Claude 的结论）
         self._resume = True

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ...events import EventType
 from ...permissions import Policy
-from ..base import AgentSession, AutonomyPolicy, EmitFn, RunOutcome
+from ..base import STREAM_LINE_LIMIT, AgentSession, AutonomyPolicy, EmitFn, RunOutcome
 from ..anthropic_stream import Mapper
 from .locate import clean_env
 
@@ -205,6 +205,7 @@ class ClaudeSession(AgentSession):
             stderr=asyncio.subprocess.PIPE,
             cwd=str(self.cwd),
             env=clean_env(),
+            limit=STREAM_LINE_LIMIT,
         )
         # 从这个 id 已经被用过的那一刻起，之后任何重启都只能走 --resume——
         # 再用 --session-id 传同一个 id 会被判为重复会话。

@@ -38,7 +38,7 @@ from pathlib import Path
 from ...events import EventType
 from ...permissions import Policy
 from ..anthropic_stream import Mapper
-from ..base import AgentSession, AutonomyPolicy, EmitFn, RunOutcome
+from ..base import STREAM_LINE_LIMIT, AgentSession, AutonomyPolicy, EmitFn, RunOutcome
 from .locate import clean_env
 
 #: READ_ONLY 档位下开放的工具。这三个名字在 CodeBuddy 的 init 工具数组里
@@ -160,6 +160,7 @@ class WorkBuddySession(AgentSession):
             stderr=asyncio.subprocess.PIPE,
             cwd=str(self.cwd),
             env=clean_env(),
+            limit=STREAM_LINE_LIMIT,
         )
         # 从这个 id 被用过的那一刻起，重启只能走 --resume
         self._resume = True

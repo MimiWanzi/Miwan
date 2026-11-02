@@ -36,7 +36,7 @@ from pathlib import Path
 from ...events import EventType
 from ...permissions import Policy
 from ..anthropic_stream import flatten_content
-from ..base import AgentSession, AutonomyPolicy, EmitFn, RunOutcome
+from ..base import STREAM_LINE_LIMIT, AgentSession, AutonomyPolicy, EmitFn, RunOutcome
 from .locate import clean_env
 
 #: AutonomyPolicy → codex 的 sandbox 档（``-s``）。映射有损：codex 没有
@@ -298,6 +298,7 @@ class CodexSession(AgentSession):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self.cwd),
                 env=clean_env(),
+                limit=STREAM_LINE_LIMIT,
             )
         except OSError as exc:
             error = f"启动 codex 进程失败：{exc}"

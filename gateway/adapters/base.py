@@ -52,6 +52,13 @@ __all__ = [
 ]
 
 
+#: 行式 JSON 子进程的读流上限。asyncio 默认一行 64KB，而 Agent 的
+#: stream-json 会把一整段回复/大工具结果作为**一行**输出，超限即炸
+#: "ValueError: Separator is not found, and chunk exceed the limit"
+#:（群聊派大活时真实踩过）。提到 16MB，内存按需分配，上限只是护栏。
+STREAM_LINE_LIMIT = 1 << 24
+
+
 class AgentStatus(str, Enum):
     """Agent 在这台机器上的可用状态。"""
 
