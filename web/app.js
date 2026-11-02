@@ -1657,6 +1657,16 @@ async function viewGroup(groupId) {
   const log = el("div", { class: "stream" });
   nodes.push(log);
 
+  // ---- 活动指示（不是时间线事件，不落库）：协调中最怕"发了话没动静"——
+  // 队长调大脑的几秒到几十秒、等成员干活的几分钟里，至少要让用户知道
+  // 谁在忙、忙到哪一步。状态每轮轮询都刷，指示行即时亮灭。 ----
+  const typingText = el("span", { text: "" });
+  const typingEl = el("div", { class: "gc-typing", hidden: true },
+    el("span", { class: "gc-dots" }, el("i"), el("i"), el("i")),
+    typingText,
+  );
+  nodes.push(typingEl);
+
   // ---- 输入框：上方一排快速@（点一下就点名，不用打字）----
   // @路由在网关侧：被点名的成员**直接并行开工**，不经过队长；
   // 直接发言才由队长安排。@全体成员 = 全员同时上。
@@ -1723,9 +1733,9 @@ async function viewGroup(groupId) {
       lastSeq = fresh[fresh.length - 1].seq;
       if (stick) view.scrollTop = view.scrollHeight;
     }
-    // 群状态（待发言/协调中）不是事件，得另问详情。每 4 轮（约 10s）刷一次
-    // 就够——状态切换本来就以 LLM 调用的秒级延迟在发生，盯太紧没意义
-    if (++pollCount % 4 === 0) refreshStatus();
+    // 群状态与活动指示不是事件，每轮跟着刷（2.5s）——指示行就是为
+    // "队长正在思考/等成员交活"的静默窗口存在的，刷慢了就失去意义
+    refreshStatus();
   }
 
   async function refreshStatus() {
@@ -1734,11 +1744,22 @@ async function viewGroup(groupId) {
       const labels = { idle: "待发言", active: "协调中", closed: "已关闭" };
       statusPillEl.textContent = labels[d.group.status] || d.group.status;
       statusPillEl.className = `pill${d.group.status === "active" ? " live" : ""}`;
+      // 协调中给一条动态说明：没单在跑 = 队长在动脑；有单在跑 = 报进度
+      const running = (d.tasks || []).filter(
+        (t) => t.status === "created" || t.status === "running",
+      ).length;
+      if (d.group.status === "active") {
+        typingText.textContent = running
+          ? `等成员交活中 · ${running} 单进行中`
+          : "队长正在思考";
+        typingEl.hidden = false;
+      } else {
+        typingEl.hidden = true;
+      }
     } catch {
       // 详情拿不到不影响看时间线，下一轮再试
     }
   }
-  let pollCount = 0;
   const timer = setInterval(poll, 2500);
   teardown = () => clearInterval(timer);
 

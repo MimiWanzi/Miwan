@@ -190,7 +190,7 @@ class GroupCoordinator:
             messages.append(self._assistant_message(reply))
 
             if reply.tool_calls:
-                ended = await self._execute(group, reply.tool_calls, messages)
+                ended = await self._execute(group, reply.tool_calls, messages, cursor)
                 if ended:
                     return
             else:
@@ -200,7 +200,7 @@ class GroupCoordinator:
                     )
                 if self._pending(group_id):
                     # 模型说完话却还有没收的单：替它等，别让结果没人接
-                    await self._wait_tasks(group_id)
+                    await self._wait_tasks(group_id, cursor)
                 else:
                     return  # 静默退出：该说的说了，该收的收了
 
@@ -248,6 +248,15 @@ class GroupCoordinator:
             "行为准则：\n"
             "- 先判断要不要拆活、派给谁。一个成员能干的别派两个——"
             "派单烧的是真实额度。\n"
+            "- **项目级的请求**（多个模块、多步走、需要定方案）先别派单：用 post_message "
+            "发一份需求文档到群里（目标、模块划分、各成员的领地、验收标准），"
+            "然后 ask_user 请用户审阅。用户要改就改完再问；用户明确通过后才拆解派单。"
+            "文档用【需求文档】开头并带版本号，方便用户对照。"
+            "一句话能干的小活不要走这套流程，直接派。\n"
+            "- 拆解时给每个成员**划清领地**：每张单子里写明只动哪些目录/文件、"
+            "不要碰什么；两个成员的领地不得重叠；共享文件（配置、入口、依赖清单）"
+            "的修改单独串行安排，不和领地内的活并行；有依赖的活串行"
+            "（先地基后上层），无依赖的才并行。\n"
             "- 多个成员的活**相互没有依赖时，在同一轮里把 dispatch_task 一起发出去**"
             "（一次回复带多个工具调用），让它们同时开工；全部派完再 wait_tasks。"
             "不要派一个等一个——并行是团队的意义。\n"
@@ -354,11 +363,16 @@ class GroupCoordinator:
         ]
 
     async def _execute(
-        self, group: Group, calls: list[ToolCall], messages: list[dict]
+        self, group: Group, calls: list[ToolCall], messages: list[dict],
+        cursor: list[int] | None = None,
     ) -> bool:
         """逐个执行工具调用并把结果作为 tool 消息回填。返回 True = 本轮该结束
         （ask_user / finish 被调用）。**后续调用仍然执行完**——
-        已经产生的调用不回滚，只是本轮不再继续。"""
+        已经产生的调用不回滚，只是本轮不再继续。
+
+        ``cursor`` 是 digest 游标（单元素列表，就地推进），透传给
+        wait_tasks 做插话检测；None 表示调用方不关心（探针直连工具时）。
+        """
         ended = False
         for call in calls:
             try:
@@ -369,7 +383,7 @@ class GroupCoordinator:
                 result = {"error": "工具参数不是合法的 JSON 对象"}
             else:
                 try:
-                    result = await self._dispatch_tool(group, call.name, args)
+                    result = await self._dispatch_tool(group, call.name, args, cursor)
                     if call.name in ("ask_user", "finish"):
                         ended = True
                 except GroupError as exc:
@@ -383,7 +397,9 @@ class GroupCoordinator:
             )
         return ended
 
-    async def _dispatch_tool(self, group: Group, name: str, args: dict) -> dict:
+    async def _dispatch_tool(
+        self, group: Group, name: str, args: dict, cursor: list[int] | None = None
+    ) -> dict:
         if name == "post_message":
             text = str(args.get("text") or "").strip()
             if not text:
@@ -415,7 +431,7 @@ class GroupCoordinator:
             }
 
         if name == "wait_tasks":
-            return {"tasks": await self._wait_tasks(group.id)}
+            return {"tasks": await self._wait_tasks(group.id, cursor)}
 
         if name == "ask_user":
             question = str(args.get("question") or "").strip()
@@ -448,11 +464,15 @@ class GroupCoordinator:
     # 任务等待与上下文
     # ------------------------------------------------------------------
 
-    async def _wait_tasks(self, group_id: str) -> list[dict]:
+    async def _wait_tasks(
+        self, group_id: str, cursor: list[int] | None = None
+    ) -> list[dict]:
         """等到本群所有任务进终态（或超时），返回全部任务的现状。
 
         超时**不是失败**：把 running 的如实报给模型，它可以选择继续等
-        （再调一次）或向用户交底。
+        （再调一次）或向用户交底。用户在等待期间**插话也提前收摊**——
+        群是用户的，队长的"等"不该变成对用户装聋；打断后任务照常在跑，
+        插话由下一轮 digest 递给模型，它自己决定先答话还是接着等。
         """
         deadline = time.monotonic() + WAIT_TIMEOUT
         while True:
@@ -462,6 +482,10 @@ class GroupCoordinator:
             if time.monotonic() >= deadline:
                 break
             await asyncio.sleep(_WAIT_TICK)
+            if cursor is not None:
+                fresh = self.store.events_for_group(group_id, cursor[0], limit=50)
+                if any(e.payload.get("kind") == KIND_USER for e in fresh):
+                    break
 
         out = []
         for t in self.store.tasks_for_group(group_id):

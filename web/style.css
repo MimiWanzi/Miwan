@@ -377,6 +377,32 @@ select { padding: 8px 10px; }
 }
 .gc-center.linkish { cursor: pointer; }
 
+/* 活动指示：协调中的静默窗口里告诉用户"谁在忙"——队长动脑 / 等成员交活。
+   不落库、不属于时间线，只是一条挂在流末尾的状态行 */
+.gc-typing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+  padding: 8px 2px 0;
+}
+.gc-typing[hidden] { display: none; }
+.gc-dots { display: inline-flex; gap: 3px; }
+.gc-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dim);
+  animation: gc-blink 1.2s infinite;
+}
+.gc-dots i:nth-child(2) { animation-delay: .2s; }
+.gc-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes gc-blink {
+  0%, 60%, 100% { opacity: .25; }
+  30% { opacity: 1; }
+}
+
 /* 快速@：一排成员色小按钮，点一下往输入框里点名。
    被点名的成员直接开工（网关侧 @路由），比打字找名字快得多 */
 .gc-at {
