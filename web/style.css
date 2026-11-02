@@ -379,6 +379,43 @@ select { padding: 8px 10px; }
 
 /* 活动指示：协调中的静默窗口里告诉用户"谁在忙"——队长动脑 / 等成员交活。
    不落库、不属于时间线，只是一条挂在流末尾的状态行 */
+/* ---------------- 群聊：协调大脑未配置的引导卡片 ---------------- */
+
+.gc-setup {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 12px 14px;
+  margin: 10px 0;
+  line-height: 1.7;
+}
+.gc-setup-title { font-weight: 600; }
+.gc-setup-sub { color: var(--dim); font-size: 12px; margin-top: 4px; }
+.gc-setup-code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.gc-setup-code code { font-family: inherit; }
+.gc-setup-copy {
+  flex: none;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .gc-typing {
   display: flex;
   align-items: center;

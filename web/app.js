@@ -1626,13 +1626,37 @@ function renderGroupEvent(ev) {
  * 轮询与任务页的 WebSocket 是平级选择：``?since=N`` 得到完全一致的序列
  * （网关侧同一段查询），群页先用轮询，实时推送等协调器接入后看需要再加。
  */
+/** 协调大脑未配置时的引导卡片：为什么只记录、怎么启用、可直接复制的片段。 */
+function groupSetupCard() {
+  const snippet = '[group]\napi_key = "sk-你的DeepSeek密钥"';
+  const copy = el("button", { type: "button", class: "gc-setup-copy", text: "复制" });
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      copy.textContent = "已复制";
+      setTimeout(() => { copy.textContent = "复制"; }, 1600);
+    } catch {
+      copy.textContent = "复制失败";
+    }
+  };
+  return el("div", { class: "gc-setup" },
+    el("div", { class: "gc-setup-title", text: "协调大脑未启用——群里的话只做记录" }),
+    el("div", { class: "gc-setup-sub",
+      text: "配置后，队长会读懂消息、自动拆活并派单给成员（成员照走审批与绊线）。" }),
+    el("div", { class: "gc-setup-code" }, el("code", { text: snippet }), copy),
+    el("div", { class: "gc-setup-sub",
+      text: "粘贴到 %LOCALAPPDATA%\\Miwan\\config.toml 末尾，保存后重启 Miwan 生效。"
+        + "密钥在 platform.deepseek.com 创建；换服务商时补 base_url / model（模板见 config.example.toml）。" }),
+  );
+}
+
 async function viewGroup(groupId) {
   const view = $("#view");
   const [detail, agentsPayload] = await Promise.all([
     api(`/api/groups/${encodeURIComponent(groupId)}`),
     api("/api/agents").catch(() => ({ agents: [], defaults: {} })),
   ]);
-  const { group } = detail;
+  const { group, coordinator } = detail;
   primeAgentLabels(agentsPayload);
 
   setTitle(group.title);
@@ -1656,6 +1680,12 @@ async function viewGroup(groupId) {
   // ---- 时间线（纯对话：任务不单列区块，成员气泡与派单提示点按即达）----
   const log = el("div", { class: "stream" });
   nodes.push(log);
+
+  // ---- 协调大脑未配置时的引导卡片。放时间线之后紧贴可见处（手机首屏
+  // 正好是时间线开头），发送后的 toast 只负责指路，详细步骤全在这里。 ----
+  if (coordinator === false && group.status !== "closed") {
+    nodes.push(groupSetupCard());
+  }
 
   // ---- 活动指示（不是时间线事件，不落库）：协调中最怕"发了话没动静"——
   // 队长调大脑的几秒到几十秒、等成员干活的几分钟里，至少要让用户知道
@@ -1779,7 +1809,7 @@ async function viewGroup(groupId) {
       lastSeq = Math.max(lastSeq, event.seq);
       if (stick) view.scrollTop = view.scrollHeight;
       if (coordinator === false) {
-        toast("未配置协调大脑，消息只做记录不会自动派活");
+        toast("协调大脑未启用——按页内说明配置后，消息才会自动拆活派单");
       }
     } catch (err) {
       failure(err);
