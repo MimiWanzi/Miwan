@@ -224,7 +224,7 @@ function resultBlock(payload) {
   );
 }
 
-function textBlock(text) {
+function textBlock(text, mentions) {
   const wrap = el("div", { class: "ev text" });
   // 只认围栏代码块这一种标记。完整 markdown 需要一个解析库，
   // 而它带来的解析器是又一个要信任的东西——为一个局域网页面不划算。
@@ -235,10 +235,36 @@ function textBlock(text) {
       const body = (nl >= 0 ? part.slice(nl + 1) : part).replace(/\n$/, "");
       wrap.append(el("pre", { class: "code", text: body }));
     } else if (part.trim()) {
-      wrap.append(el("div", { class: "para", text: part.trim() }));
+      const para = el("div", { class: "para" });
+      if (mentions) appendWithMentions(para, part.trim());
+      else para.append(document.createTextNode(part.trim()));
+      wrap.append(para);
     }
   });
   return wrap;
+}
+
+/** 把文本写进 parent，@提及按成员色高亮。匹配照 MACH 的关键词方案：
+ * @ 后的 token 与成员名精确/忽略大小写/前缀对上才上色，认不出的 @ 原样保留。 */
+function appendWithMentions(parent, text) {
+  const re = /@([^\s@,，。！？、；：]+)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    const hit = Object.entries(agentLabels).find(
+      ([id, name]) => name === m[1]
+        || name.toLowerCase() === m[1].toLowerCase()
+        || (m[1].length >= 2 && name.toLowerCase().startsWith(m[1].toLowerCase())),
+    );
+    if (!hit) continue;
+    parent.append(document.createTextNode(text.slice(last, m.index)));
+    parent.append(el("span", {
+      class: "gc-mention",
+      style: `color:${agentColorOf(hit[0])}`,
+      text: `@${hit[1]}`,
+    }));
+    last = m.index + m[0].length;
+  }
+  parent.append(document.createTextNode(text.slice(last)));
 }
 
 function metaLine(tag, detail, extra) {
@@ -1563,7 +1589,7 @@ function renderGroupEvent(ev) {
     const col = el("div", { class: "gc-col" });
     const box = el("div", { class: "gc-bubble" });
     if (color) box.style.borderColor = color + "55";
-    for (const child of textBlock(text).children) box.append(child);
+    for (const child of textBlock(text, true).children) box.append(child);
     if (taskId) {
       box.classList.add("linkish");
       box.onclick = () => go(`#/t/${encodeURIComponent(taskId)}`);
@@ -1585,7 +1611,7 @@ function renderGroupEvent(ev) {
       const row = el("div", { class: "gc-row me" });
       const col = el("div", { class: "gc-col" });
       const box = el("div", { class: "gc-bubble" });
-      for (const child of textBlock(p.text || "").children) box.append(child);
+      for (const child of textBlock(p.text || "", true).children) box.append(child);
       col.append(box);
       col.append(el("div", { class: "gc-sig", text: `你 · ${clockTime(ev.ts)}` }));
       row.append(col);
@@ -1606,15 +1632,37 @@ function renderGroupEvent(ev) {
       );
     }
     case "dispatch": {
-      // 派单回执：prompt 是给成员的内部指令，不贴出来；这行只回答
-      // "活派出去没"——@点名的单子写"你 叫醒了"，队长编排的写"队长 派单给"
+      // 派单 = 队长在群里的一次"布置工作"交接卡：成员色的 @ 点名 +
+      // 活儿摘要首行，点按进任务页。@用户叫醒和队长派单同一张卡、两种口吻。
       const mine = p.by === "user";
-      const line = el("div", {
-        class: "gc-center" + (p.task_id ? " linkish" : ""),
-        text: `${mine ? "你 叫醒了" : "队长 派单给"} ${agentName(p.agent_id)}${p.task_id ? "（点按看任务）" : ""}`,
-      });
-      if (p.task_id) line.onclick = () => go(`#/t/${encodeURIComponent(p.task_id)}`);
-      return line;
+      const color = agentColorOf(p.agent_id);
+      const box = el("div", { class: "gc-bubble gc-dispatch" });
+      box.style.borderColor = color + "55";
+      box.append(el("span", {
+        class: "gc-mention",
+        style: `color:${color}`,
+        text: `@${agentName(p.agent_id)}`,
+      }));
+      const brief = String(p.prompt || "").split("\n").find(Boolean) || "";
+      if (brief) {
+        box.append(el("div", {
+          class: "gc-dispatch-brief",
+          text: brief.length > 96 ? `${brief.slice(0, 96)}…` : brief,
+        }));
+      }
+      if (p.task_id) {
+        box.classList.add("linkish");
+        box.onclick = () => go(`#/t/${encodeURIComponent(p.task_id)}`);
+      }
+      const col = el("div", { class: "gc-col" });
+      col.append(box);
+      const sig = el("div", { class: "gc-sig" });
+      if (!mine) sig.append(el("i", { class: "gc-dot", style: `background:${CAPTAIN_COLOR}` }));
+      sig.append(document.createTextNode(`${mine ? "你" : "队长"} · ${clockTime(ev.ts)}`));
+      col.append(sig);
+      const row = el("div", { class: "gc-row" });
+      row.append(col);
+      return row;
     }
     default:
       return el("div", { class: "gc-center", text: p.text || "" });

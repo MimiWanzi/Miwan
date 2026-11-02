@@ -416,6 +416,17 @@ select { padding: 8px 10px; }
   cursor: pointer;
 }
 
+/* @提及：群聊气泡与派单卡里的点名，按成员色高亮 */
+.gc-mention { font-weight: 600; }
+
+/* 派单卡：复用气泡壳（成员色边框），下面一行是任务摘要首行 */
+.gc-dispatch .gc-dispatch-brief {
+  color: var(--dim);
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.6;
+}
+
 .gc-typing {
   display: flex;
   align-items: center;
